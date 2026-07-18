@@ -864,6 +864,36 @@ export interface WecomBotStatus {
   last_error: string
 }
 
+export interface LongbridgeWebsocketStatus {
+  provider: 'longbridge'
+  transport: 'websocket'
+  configured: boolean
+  running: boolean
+  healthy: boolean
+  status: string
+  heartbeat_at: string | null
+  error?: string
+  subscription: {
+    source: string
+    limit: number
+    markets: string[]
+    reload_seconds: number
+    data_types: string[]
+    priority: string[]
+    sinks: string[]
+    buffer_capacity: number
+    flush_batch_size: number
+    flush_interval_ms: number
+  }
+  activity: {
+    available: boolean
+    symbol_count: number
+    markets: Record<string, number>
+    last_event_at: string | null
+    error?: string
+  }
+}
+
 export interface Preferences {
   realtime_quotes_enabled: boolean
   indices_nav_pinned: boolean
@@ -1269,6 +1299,8 @@ export const api = {
     request<{ results: { symbol: string; name: string; code: string; market: 'cn' | 'hk' | 'us'; asset_type?: string }[] }>(
       `/api/kline/instruments/search?q=${encodeURIComponent(q)}&limit=${limit}${assetTypes ? `&asset_types=${encodeURIComponent(assetTypes)}` : ''}${market !== 'all' ? `&markets=${encodeURIComponent(market)}` : ''}`,
     ),
+  longbridgeWebsocketStatus: () =>
+    request<LongbridgeWebsocketStatus>('/api/settings/longbridge-websocket'),
 
   /** 批量查股票名称 (传入 symbol 列表, 返回 {symbol: name}) */
   instrumentNames: (symbols: string[]) =>

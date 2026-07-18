@@ -17,6 +17,7 @@ export const QK = {
   dataSources:    ['data-sources'] as const,
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,
+  longbridgeWebsocket: ['longbridge-websocket'] as const,
   overviewMarket: (market: string = 'cn', asOf?: string) => ['overview-market', market, asOf ?? 'latest'] as const,
   indexQuotes:    ['index-quotes'] as const,
   indexList:      ['index-list'] as const,
