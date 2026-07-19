@@ -228,7 +228,10 @@ class StrategyEngine:
         dependency_names = frozenset(candidate.stem for candidate in dependency_paths)
         builtin_dir = Path(__file__).resolve().parent / "builtin"
         builtin_shared_modules = (
-            frozenset({"app.strategy.shared_structure_breakout"})
+            frozenset({
+                "app.strategy.shared_dow_patterns",
+                "app.strategy.shared_structure_breakout",
+            })
             if path.resolve().parent == builtin_dir
             else frozenset()
         )
