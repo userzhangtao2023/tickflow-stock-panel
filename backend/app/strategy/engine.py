@@ -292,6 +292,10 @@ class StrategyEngine:
         meta.setdefault("order_by", "score")
         meta.setdefault("descending", True)
         meta.setdefault("limit", 100)
+        role = str(meta.get("strategy_role", "buy"))
+        if role not in {"buy", "early_buy", "risk"}:
+            raise ValueError("META['strategy_role'] must be buy, early_buy, or risk")
+        meta["strategy_role"] = role
 
         source = "custom"
         normalized_path = str(path).replace("\\", "/")
@@ -875,7 +879,12 @@ class StrategyEngine:
         if not target_ids:
             return StrategyResult(as_of=as_of, strategy_id=strategy_id)
         target_time = target_ids[-1]
-        selected_assets = np.flatnonzero(signals.entry[target_time] != 0)
+        selection = (
+            signals.exit
+            if strategy.meta.get("strategy_role") == "risk"
+            else signals.entry
+        )
+        selected_assets = np.flatnonzero(selection[target_time] != 0)
         if selected_assets.size == 0:
             return StrategyResult(
                 as_of=as_of,

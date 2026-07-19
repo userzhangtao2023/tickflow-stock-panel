@@ -582,6 +582,12 @@ class StrategyBacktestService:
         self.engine = engine
         self.strategy_engine = strategy_engine
 
+    def _require_backtestable(self, strategy_id: str) -> StrategyDef:
+        strategy = self.strategy_engine.get(strategy_id)
+        if strategy.meta.get("strategy_role") == "risk":
+            raise ValueError("风险策略不支持买入回测")
+        return strategy
+
     @staticmethod
     def _matrix_prepare_signature(config: StrategyBacktestConfig) -> tuple:
         return (
@@ -619,7 +625,7 @@ class StrategyBacktestService:
             raise ValueError("optimizer trials must share strategy, universe, range and overrides")
 
         first = configs[0]
-        strategy = self.strategy_engine.get(first.strategy_id)
+        strategy = self._require_backtestable(first.strategy_id)
         if strategy.execution_backend != "matrix_native":
             raise ValueError("shared MarketDataMatrix preparation requires matrix_native strategy")
         StrategyEngine.validate_context(
@@ -769,6 +775,7 @@ class StrategyBacktestService:
         prepared: PreparedMatrixBacktest | None = None,
         result_policy: BacktestResultPolicy | None = None,
     ) -> StrategyBacktestResult:
+        s = self._require_backtestable(config.strategy_id)
         t0 = time.perf_counter()
         run_id = uuid.uuid4().hex[:10]
         result_policy = result_policy or BacktestResultPolicy()
@@ -783,7 +790,6 @@ class StrategyBacktestService:
 
         # 获取策略定义
         try:
-            s = self.strategy_engine.get(config.strategy_id)
             StrategyEngine.validate_context(
                 s,
                 StrategyDataContext(
