@@ -733,6 +733,7 @@ export function Screener() {
                   name={s.name}
                   description={s.description}
                   source={s.source}
+                  strategyRole={s.strategy_role}
                   active={activeStrategy === s.id}
                   count={hitCounts[id]}
                   expiredCount={expiredCounts[id]}

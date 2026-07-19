@@ -15,6 +15,7 @@ import { fmtPct, fmtPrice, priceColorClass } from '@/lib/format'
 import { boardTag } from '@/lib/board'
 import { BUILTIN_COLUMNS } from '@/lib/watchlist-columns'
 import { cnSignal } from '@/lib/signals'
+import { isBacktestableStrategy } from '@/lib/strategy-role'
 import {
   currencyForMarket,
   currencyLabel,
@@ -823,7 +824,10 @@ export function StrategyBacktest() {
     queryFn: () => api.screenerStrategies(assetType),
   })
 
-  const strategyList = useMemo(() => strategies.data?.presets ?? [], [strategies.data])
+  const strategyList = useMemo(
+    () => (strategies.data?.presets ?? []).filter(isBacktestableStrategy),
+    [strategies.data],
+  )
   const filteredStrategyList = useMemo(() => (
     strategyGroup === 'all' ? strategyList : strategyList.filter(st => st.source === strategyGroup)
   ), [strategyGroup, strategyList])

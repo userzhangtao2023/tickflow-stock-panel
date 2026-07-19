@@ -271,6 +271,7 @@ export interface ScreenerStrategy {
   name: string
   description: string
   source?: string
+  strategy_role?: 'buy' | 'early_buy' | 'risk'
 }
 
 export interface StrategyLoadError {
@@ -424,6 +425,7 @@ export interface StrategyDetail {
   description: string
   tags: string[]
   source: 'builtin' | 'custom' | 'ai'
+  strategy_role: 'buy' | 'early_buy' | 'risk'
   execution_backend: 'polars_expr' | 'matrix_native' | 'python_history_legacy'
   asset_types: string[]
   timeframes: string[]

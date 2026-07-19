@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pytest
 
 from app.backtest.matrix import make_signal_matrix
+from app.api.strategy import _strategy_detail
 from app.strategy.engine import StrategyDataContext, StrategyDef, StrategyEngine
 
 
@@ -99,3 +101,10 @@ def test_matrix_screener_selects_exit_plane_for_risk_strategy() -> None:
     )
 
     assert [row["symbol"] for row in result.rows] == ["B.US"]
+
+
+def test_strategy_detail_exposes_role() -> None:
+    path = Path(__file__).parents[1] / "app" / "strategy" / "builtin" / "dow_evening_star.py"
+    strategy = StrategyEngine._load_file(path)
+
+    assert _strategy_detail(strategy)["strategy_role"] == "risk"
