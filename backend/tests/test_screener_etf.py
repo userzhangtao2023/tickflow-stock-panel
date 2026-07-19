@@ -130,6 +130,20 @@ def test_service_etf_uses_etf_dir(tmp_path):
     assert svc._enriched_dirname == "kline_etf_enriched"
 
 
+def test_strategy_context_does_not_use_market_code_as_matrix(tmp_path):
+    svc = ScreenerService(_FakeRepo(tmp_path), market="cn")
+    engine = types.SimpleNamespace(required_history_bars=lambda *args, **kwargs: 1)
+
+    context = svc.build_strategy_context(
+        engine,
+        date(2026, 1, 2),
+        ["trend_breakout"],
+        current=pl.DataFrame({"symbol": ["000001.SZ"]}),
+    )
+
+    assert context.market is None
+
+
 def test_etf_strategy_runs_through_engine_context(tmp_path):
     rows = []
     for offset in range(61):

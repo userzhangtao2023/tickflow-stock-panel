@@ -406,7 +406,7 @@ class ScreenerService:
             as_of=as_of,
             current=current,
             history=history,
-            market=market or self.market,
+            market=market,
             cache_key=cache_key,
         )
 
