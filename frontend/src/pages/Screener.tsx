@@ -603,7 +603,7 @@ export function Screener() {
         title="策略"
         subtitle="基于本地 enriched 表 · 毫秒级 SQL"
         right={
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-max items-center gap-2 md:min-w-0">
             {assetType === 'stock' && (
               <MarketFilterTabs
                 value={marketFilter}
@@ -713,7 +713,7 @@ export function Screener() {
         }
       />
 
-      <div className="px-8 py-4 space-y-3">
+      <div className="space-y-3 px-2 py-3 sm:px-5 lg:px-8 lg:py-4">
         {/* 策略卡片 */}
         {cardSize !== 'hidden' && (
         <section>
@@ -767,7 +767,7 @@ export function Screener() {
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
               className="space-y-3"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-sm font-medium text-foreground flex items-center gap-2">
                   {!showAll && activeStrategy && (
                     <span className="text-secondary">{strategyIdToName[activeStrategy] ?? ''}</span>
@@ -787,7 +787,7 @@ export function Screener() {
                     <span className="text-[11px] text-muted animate-pulse">扫描中…</span>
                   )}
                 </h2>
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:gap-3">
                   {(showAll ? allRows.length > 0 : !!result?.rows.length) && (
                     <div className="inline-flex items-stretch h-7 rounded-btn border border-border bg-surface overflow-hidden">
                       <button
