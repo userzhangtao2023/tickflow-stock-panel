@@ -41,3 +41,10 @@ requirements:
     acceptance:
       - {path: docs/acceptance/stock-ai-five-dimension.md, type: semantic-acceptance}
       - {path: docs/reviews/stock-ai-five-dimension.md, type: independent-review}
+  - id: REQ-MARKET-OVERVIEW-REALTIME-001
+    specification: SPEC-MARKET-OVERVIEW-REALTIME-001
+    implementation: backend/app/services/market_overview_builder.py
+    tests: {path: backend/tests/test_market_overview_realtime.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/market-overview-realtime.md, type: semantic-acceptance}
+      - {path: docs/reviews/market-overview-realtime.md, type: independent-review}

@@ -89,6 +89,33 @@ def _score(value: float, low: float, high: float) -> int:
     return max(0, min(100, round((value - low) / (high - low) * 100)))
 
 
+def _overlay_realtime_rows(rows: list[dict], quotes: list[dict]) -> list[dict]:
+    """以日线行作为范围和技术基线,只覆盖实时行情字段。"""
+    by_symbol = {
+        str(quote.get("symbol") or "").upper(): quote
+        for quote in quotes
+        if quote.get("symbol")
+    }
+    out: list[dict] = []
+    for row in rows:
+        merged = dict(row)
+        quote = by_symbol.get(str(row.get("symbol") or "").upper())
+        if quote:
+            last_price = _finite(quote.get("last_price"))
+            prev_close = _finite(quote.get("prev_close"))
+            change_pct = _finite(quote.get("change_pct"))
+            if change_pct is None and last_price is not None and prev_close not in (None, 0):
+                change_pct = (last_price - prev_close) / prev_close
+            for target, source in (("close", "last_price"), ("volume", "volume"), ("amount", "amount")):
+                value = _finite(quote.get(source))
+                if value is not None:
+                    merged[target] = value
+            if change_pct is not None:
+                merged["change_pct"] = change_pct
+        out.append(merged)
+    return out
+
+
 # ================================================================
 # 指数行情(实时 quote_service 优先,回退 kline_index_daily SQL)
 # ================================================================
@@ -391,6 +418,7 @@ def build_market_overview(
     as_of: date | None = None,
     market: str = "cn",
     dimension_provider=None,
+    realtime_provider=None,
 ) -> dict:
     """装配市场总览(与原 overview._build_overview 行为一致)。
 
@@ -446,6 +474,34 @@ def build_market_overview(
         ]
         df = df.select([c for c in cols if c in df.columns])
         rows = df.to_dicts()
+
+    if rows and not explicit_as_of:
+        if realtime_provider is None:
+            try:
+                from app.data_providers import custom as custom_sources
+                from app.services import preferences
+
+                provider_name = preferences.get_realtime_data_provider()
+                if (
+                    provider_name != "tickflow"
+                    and custom_sources.provider_has_dataset(provider_name, "realtime")
+                ):
+                    realtime_provider = custom_sources.get_provider(provider_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("market overview realtime provider unavailable: %s", type(exc).__name__)
+        if realtime_provider is not None:
+            try:
+                symbols = [str(row.get("symbol") or "") for row in rows if row.get("symbol")]
+                rows = _overlay_realtime_rows(
+                    rows,
+                    realtime_provider.get_realtime(symbols=symbols) or [],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "market overview realtime overlay failed for %s: %s",
+                    market,
+                    type(exc).__name__,
+                )
 
     # 过滤真停牌（volume=0 且 change_pct=0），保留有涨跌幅的浮点误差股以对齐同花顺口径
     if rows and "volume" in rows[0]:

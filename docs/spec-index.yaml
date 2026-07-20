@@ -14,5 +14,10 @@ specifications:
       - REQ-STOCK-AI-CAPITAL-001
       - REQ-STOCK-AI-MARKET-001
       - REQ-STOCK-AI-UI-001
+  - id: SPEC-MARKET-OVERVIEW-REALTIME-001
+    path: docs/specs/market-overview-realtime.md
+    status: authoritative
+    requirements:
+      - REQ-MARKET-OVERVIEW-REALTIME-001
 conflicts: []
 exceptions: []
