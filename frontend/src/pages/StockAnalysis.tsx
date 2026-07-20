@@ -19,7 +19,7 @@ import { useMarketScope } from '@/lib/market-scope'
 import { matchesMarketFilter } from '@/lib/market-display'
 
 /**
- * 个股分析页 —— 日 K + 关键价位(压力/支撑/密集区/枢轴/前高前低)+ AI 四维分析。
+ * 个股分析页 —— 日 K + 关键价位(压力/支撑/密集区/枢轴/前高前低)+ AI 五维分析。
  *
  * 与财务分析页的区别:
  *  - 以【行情 + 关键价位】为视觉主体(专用日 K 图表,不复用个股对话框图表)
@@ -82,7 +82,7 @@ export function StockAnalysis() {
   }
 
   const doAnalysis = async () => {
-    const r = await startAnalysis(symbol, name)
+    const r = await startAnalysis(symbol, name, '', market)
     if (r.error) toast(r.error, 'error')
   }
 
@@ -95,7 +95,7 @@ export function StockAnalysis() {
             Beta
           </span>
         }
-        subtitle="日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)"
+        subtitle="日 K · 关键价位 · AI 五维分析(技术 / 资金 / 基本面 / 财务 / 消息面)"
         right={
           <div className="flex items-center gap-2">
             <LastStockChip stock={marketLastStock} onSelect={onSelect} />
@@ -158,7 +158,7 @@ export function StockAnalysis() {
               <EmptyState
                 icon={LineChart}
                 title="选择一只股票开始分析"
-                hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 基本面 / 财务面 / 消息面四维综合分析。"
+                hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 资金 / 基本面 / 财务 / 消息面五维综合分析。"
               />
             ) : (
               <StockAnalysisBoard symbol={symbol} />

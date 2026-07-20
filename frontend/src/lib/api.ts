@@ -1899,10 +1899,10 @@ export const api = {
     request<{ ok: boolean }>(`/api/stock-analysis/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' }),
 
   /**
-   * AI 个股四维分析 — 流式调用(NDJSON,与财务分析同协议)。
+   * AI 个股五维分析 — 流式调用(NDJSON,与财务分析同协议)。
    * meta 里额外带 levels(关键价位)供图表回放。
    */
-  async *stockAnalyzeStream(symbol: string, focus?: string): AsyncGenerator<{
+  async *stockAnalyzeStream(symbol: string, focus?: string, market?: 'cn' | 'hk' | 'us'): AsyncGenerator<{
     type: 'meta' | 'delta' | 'error' | 'done'
     symbol?: string
     summary?: string
@@ -1914,7 +1914,7 @@ export const api = {
     const res = await fetch('/api/stock-analysis/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol, focus: focus ?? '' }),
+      body: JSON.stringify({ symbol, focus: focus ?? '', market }),
     })
     if (!res.ok) {
       let detail = ''

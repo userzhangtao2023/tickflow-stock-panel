@@ -1,4 +1,4 @@
-"""AI 个股分析服务 — 技术面 / 基本面 / 财务面 / 消息面 四维综合分析。
+"""AI 个股分析服务 — 技术面 / 资金 / 基本面 / 财务面 / 消息面 五维综合分析。
 
 职责:
   组合一只股票的 K 线(含已算好的技术指标)+ 财务表 + 关键价位 →
@@ -7,7 +7,7 @@
 与 financial_analyzer.py 的区别(刻意区分,非复用):
   - 角色:客观技术分析师(非 CFA 财务分析师)
   - 数据源:K 线 + 技术指标为主,财务表为辅(财务分析以财务表为主)
-  - 输出框架:技术面→基本面→财务面→消息面(四维),落点是客观技术状态与风险提示
+  - 输出框架:技术面→资金→基本面→财务面→消息面(五维),落点是客观技术状态与风险提示
     (财务分析的落点是财务质量评级)。注意:本服务不输出买卖建议、操作指令。
 
 不知道: HTTP、前端、配置持久化。
@@ -30,6 +30,47 @@ logger = logging.getLogger(__name__)
 _KLINE_WINDOW = 90
 # 注入财务表的最近期数
 _MAX_PERIODS = 4
+
+_MARKET_CONTEXT = {
+    "cn": ("A 股", "人民币"),
+    "hk": ("港股", "港元"),
+    "us": ("美股", "美元"),
+}
+
+
+def _resolve_market(symbol: str, market: str | None) -> str:
+    normalized = (market or "").strip().lower()
+    if normalized in _MARKET_CONTEXT:
+        return normalized
+    suffix = symbol.upper().rsplit(".", 1)[-1]
+    if suffix == "HK":
+        return "hk"
+    if suffix == "US":
+        return "us"
+    return "cn"
+
+
+def _build_capital_metrics(df: pl.DataFrame) -> dict[str, float]:
+    """将成交额压缩成可复核的资金活跃度指标,不推断买卖方向。"""
+    if df.is_empty() or "amount" not in df.columns:
+        return {}
+    values = [float(v) for v in df["amount"].drop_nulls().to_list()]
+    if not values:
+        return {}
+    current = values[-1]
+    ma5 = sum(values[-5:]) / min(5, len(values))
+    ma20 = sum(values[-20:]) / min(20, len(values))
+    window60 = values[-60:]
+    return {
+        "amount": round(current, 4),
+        "amount_ma5": round(ma5, 4),
+        "amount_ma20": round(ma20, 4),
+        "amount_ratio_5d": round(current / ma5, 4) if ma5 else 0.0,
+        "amount_ratio_20d": round(current / ma20, 4) if ma20 else 0.0,
+        "amount_percentile_60d": round(
+            sum(value <= current for value in window60) / len(window60), 4
+        ),
+    }
 
 
 # ================================================================
@@ -111,7 +152,7 @@ def _load_financials(data_dir: Path, symbol: str) -> dict[str, list[dict]]:
 
 
 # ================================================================
-# 系统提示词 —— 客观技术分析四维框架(与财务分析明确区分)
+# 系统提示词 —— 客观技术分析五维框架(与财务分析明确区分)
 # 重要原则:只描述"指标/价位处于什么客观状态",不输出"应该怎么操作"。
 # 本报告定位为客观行情分析,不提供任何买卖建议、仓位建议或交易指令。
 # ================================================================
@@ -187,6 +228,39 @@ _SYSTEM_PROMPT = """你是一位拥有 15 年 A 股一线研究经验的技术�
 现在请基于下方数据进行分析。"""
 
 
+def _build_system_prompt(market: str) -> str:
+    resolved = _resolve_market("", market)
+    market_name, currency = _MARKET_CONTEXT[resolved]
+    prompt = _SYSTEM_PROMPT.replace(
+        "拥有 15 年 A 股一线研究经验",
+        f"拥有 15 年{market_name}一线研究经验",
+        1,
+    )
+    if resolved != "cn":
+        prompt = prompt.replace(
+            "- 涨停/连板/炸板 → 可能存在利好或资金关注\n",
+            "- 成交额与波动同步显著放大 → 可能存在事件驱动或市场关注\n",
+        )
+    capital_section = """
+### 3. 💧 资金状态(成交活跃度与量价结构)
+基于提供的成交额统计,独立描述资金活跃状态:
+- 对比当日成交额、5 日/20 日平均成交额、相对倍数及 60 日分位
+- 结合涨跌幅、量比和换手率,归纳放量上涨、放量下跌、缩量上涨、缩量回调或巨量震荡
+- 必须引用具体数值,说明成交活跃度是增强、平稳还是减弱
+- **成交额仅表示交易活跃度,不等于资金净流入;缺少主动买卖方向数据时,不得表述为资金净流入、主力流入或主力流出**
+
+"""
+    prompt = prompt.replace("### 3. 💰 关键价位", capital_section + "### 4. 💰 关键价位")
+    prompt = prompt.replace("### 4. 🏮 基本面与财务面", "### 5. 🏮 基本面与财务面")
+    prompt = prompt.replace("### 5. 📰 消息面", "### 6. 📰 消息面")
+    prompt = prompt.replace("### 6. ⚖️ 综合研判与风险提示", "### 7. ⚖️ 综合研判与风险提示")
+    return (
+        f"## 市场口径\n\n本次标的是{market_name},价格及成交额币种为{currency}。"
+        "所有结论必须使用该市场的交易制度与行情语义。\n\n"
+        + prompt
+    )
+
+
 # ================================================================
 # 用户消息构建
 # ================================================================
@@ -198,10 +272,15 @@ def _build_user_prompt(
     close: float | None,
     symbol: str,
     focus: str,
+    market: str = "cn",
+    capital_metrics: dict[str, float] | None = None,
 ) -> str:
     """构建用户消息:标的 + 价位摘要 + 技术指标 JSON + 财务摘要 + 关注点。"""
+    resolved_market = _resolve_market(symbol, market)
+    market_name, currency = _MARKET_CONTEXT[resolved_market]
     parts: list[str] = [
         f"标的标准代码: {symbol}",
+        f"市场: {market_name}",
         f"关键价位概览: {summarize_levels(levels, close)}",
         "",
         "以下是该标的最近日 K 数据(JSON,含 OHLCV 与已计算的技术指标。"
@@ -211,11 +290,20 @@ def _build_user_prompt(
         "```",
     ]
 
+    if capital_metrics:
+        parts.extend([
+            "",
+            "以下是成交额资金活跃度统计(JSON,金额币种遵循上述市场口径):",
+            "```json",
+            json.dumps(capital_metrics, ensure_ascii=False),
+            "```",
+        ])
+
     has_fin = any(fins.values())
     if has_fin:
         parts.extend([
             "",
-            "以下是该标的最新财务数据(JSON,核心指标 + 利润表,金额单位为元):",
+            f"以下是该标的最新财务数据(JSON,核心指标 + 利润表,金额单位为{currency}):",
             "```json",
             json.dumps(fins, ensure_ascii=False),
             "```",
@@ -224,7 +312,7 @@ def _build_user_prompt(
         parts.extend([
             "",
             "(该标的暂无财务数据:当前为 Free 模式或尚未同步财务报表。"
-            "请按系统提示词第 4 节的说明,在基本面/财务面维度给出\"接入中\"的友好提示,不要编造数据。)",
+            "请按系统提示词第 5 节的说明,在基本面/财务面维度给出\"接入中\"的友好提示,不要编造数据。)",
         ])
 
     from app.services.ai_provider import sanitize_focus
@@ -239,7 +327,7 @@ def _build_user_prompt(
 # ================================================================
 
 _KLINE_KEEP_COLS = [
-    "date", "open", "high", "low", "close", "volume", "change_pct",
+    "date", "open", "high", "low", "close", "volume", "amount", "change_pct",
     "ma5", "ma10", "ma20", "ma60",
     "macd_dif", "macd_dea", "macd_hist",
     "kdj_k", "kdj_d", "kdj_j",
@@ -263,6 +351,7 @@ async def analyze_stock_stream(
     data_dir: Path,
     symbol: str,
     focus: str = "",
+    market: str | None = None,
 ) -> AsyncIterator[str]:
     """流式个股分析:yield 出每个 NDJSON 事件。
 
@@ -302,10 +391,20 @@ async def analyze_stock_stream(
         from app.services.ai_provider import stream_ai_text
 
         kline_tail = _clean_rows(df, _KLINE_KEEP_COLS)
-        user_prompt = _build_user_prompt(kline_tail, fins, levels, close, symbol, focus)
+        resolved_market = _resolve_market(symbol, market)
+        user_prompt = _build_user_prompt(
+            kline_tail,
+            fins,
+            levels,
+            close,
+            symbol,
+            focus,
+            resolved_market,
+            _build_capital_metrics(df),
+        )
         async for delta in stream_ai_text(
             [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": _build_system_prompt(resolved_market)},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.5,

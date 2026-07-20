@@ -1,10 +1,10 @@
-"""个股分析 API — 关键价位 + AI 四维分析 + 报告持久化。
+"""个股分析 API — 关键价位 + AI 五维分析 + 报告持久化。
 
 路由前缀: /api/stock-analysis
 
 端点:
   GET  /levels?symbol=         11 类关键价位(图表 markLine 数据源)
-  POST /analyze                AI 流式四维分析(NDJSON)
+  POST /analyze                AI 流式五维分析(NDJSON)
   GET  /reports                历史报告列表
   POST /reports                保存一条报告
   DELETE /reports/{report_id}  删除一条报告
@@ -149,11 +149,12 @@ class AnalyzeRequest(BaseModel):
     """AI 个股分析请求。"""
     symbol: str
     focus: str = ""  # 可选:用户追加的分析关注点
+    market: str | None = None
 
 
 @router.post("/analyze")
 async def analyze_stock(request: Request, req: AnalyzeRequest):
-    """AI 个股四维分析 — NDJSON 流式返回。
+    """AI 个股五维分析 — NDJSON 流式返回。
 
     组合 K 线(技术指标)+ 财务表 + 关键价位 → 客观技术分析提示词 →
     流式调用 LLM → 逐 chunk 以 NDJSON 推给前端(每行一个 JSON)。
@@ -165,7 +166,7 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
     data_dir = repo.store.data_dir
 
     async def stream_gen():
-        async for chunk in analyze_stock_stream(repo, data_dir, req.symbol, req.focus):
+        async for chunk in analyze_stock_stream(repo, data_dir, req.symbol, req.focus, req.market):
             yield chunk + "\n"
 
     return StreamingResponse(

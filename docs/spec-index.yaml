@@ -7,5 +7,12 @@ specifications:
     requirements:
       - REQ-GLOBAL-INDEX-API-001
       - REQ-GLOBAL-INDEX-UI-001
+  - id: SPEC-STOCK-AI-FIVE-DIMENSION-001
+    path: docs/specs/stock-ai-five-dimension.md
+    status: authoritative
+    requirements:
+      - REQ-STOCK-AI-CAPITAL-001
+      - REQ-STOCK-AI-MARKET-001
+      - REQ-STOCK-AI-UI-001
 conflicts: []
 exceptions: []
