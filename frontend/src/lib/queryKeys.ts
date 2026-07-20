@@ -17,7 +17,8 @@ export const QK = {
   dataSources:    ['data-sources'] as const,
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,
-  overviewMarket: (asOf?: string) => ['overview-market', asOf ?? 'latest'] as const,
+  longbridgeWebsocket: ['longbridge-websocket'] as const,
+  overviewMarket: (market: string = 'cn', asOf?: string) => ['overview-market', market, asOf ?? 'latest'] as const,
   indexQuotes:    ['index-quotes'] as const,
   indexList:      ['index-list'] as const,
 
@@ -29,16 +30,18 @@ export const QK = {
   // 不用 watchlist- 前缀: 避免被 SSE quotes_updated 高频失效(expert 1s/pro 2s)
   // 导致每次都拉 TickFlow 触限流。分时图用固定 refetchInterval 刷新即可。
   minuteBatch:          (symbols: string) => ['minute-batch', symbols] as const,
-  instrumentSearch:     (q: string, assetTypes?: string) => ['instrument-search', q, assetTypes ?? 'stock'] as const,
+  instrumentSearch:     (q: string, assetTypes?: string, market = 'all') => ['instrument-search', q, assetTypes ?? 'stock', market] as const,
 
   // Screener
   screener:             ['screener'] as const,
   screenerStrategies:   (assetType: string = 'stock') => ['screener-strategies', assetType] as const,
-  screenerCachedSummary: ['screener-cached', 'summary'] as const,
-  screenerCachedResult: (strategyId: string, asOf?: string, ext?: string) => ['screener-cached', 'strategy', strategyId, asOf ?? '', ext ?? ''] as const,
-  screenerCached:       (asOf?: string, ext?: string) => ['screener-cached', 'all', asOf ?? '', ext ?? ''] as const,
+  screenerCachedSummary: (market: string = 'cn') => ['screener-cached', market, 'summary'] as const,
+  screenerCachedResult: (market: string, strategyId: string, asOf?: string, ext?: string) => ['screener-cached', market, 'strategy', strategyId, asOf ?? '', ext ?? ''] as const,
+  screenerCached:       (market: string = 'cn', asOf?: string, ext?: string) => ['screener-cached', market, 'all', asOf ?? '', ext ?? ''] as const,
   screenerKlineBatch:   (symbols: string) => ['screener-kline-batch', symbols] as const,
-  marketSnapshot:       ['market-snapshot'] as const,
+  marketSnapshot:       (market: string = 'cn') => ['market-snapshot', market] as const,
+  marketIndustries:     (market: string) => ['market-industries', market] as const,
+  marketConcepts:       (market: string) => ['market-concepts', market] as const,
   limitLadder:          (asOf?: string) => ['limit-ladder', asOf] as const,
 
   // Backtest

@@ -228,12 +228,23 @@ class StrategyEngine:
             if candidate != path
         ]
         dependency_names = frozenset(candidate.stem for candidate in dependency_paths)
+        builtin_dir = Path(__file__).resolve().parent / "builtin"
+        builtin_shared_modules = (
+            frozenset({
+                "app.strategy.shared_dow_patterns",
+                "app.strategy.shared_structure_breakout",
+            })
+            if path.resolve().parent == builtin_dir
+            else frozenset()
+        )
         try:
             code = path.read_text(encoding="utf-8")
             from app.strategy.ai_generator import AIStrategyGenerator
             AIStrategyGenerator._validate_safety(
                 code,
-                extra_allowed_import_modules=dependency_names,
+                extra_allowed_import_modules=(
+                    dependency_names | builtin_shared_modules
+                ),
             )
             for dependency_path in dependency_paths:
                 AIStrategyGenerator._validate_safety(
@@ -286,6 +297,10 @@ class StrategyEngine:
         meta.setdefault("order_by", "score")
         meta.setdefault("descending", True)
         meta.setdefault("limit", 100)
+        role = str(meta.get("strategy_role", "buy"))
+        if role not in {"buy", "early_buy", "risk"}:
+            raise ValueError("META['strategy_role'] must be buy, early_buy, or risk")
+        meta["strategy_role"] = role
 
         source = "custom"
         normalized_path = str(path).replace("\\", "/")
@@ -869,7 +884,12 @@ class StrategyEngine:
         if not target_ids:
             return StrategyResult(as_of=as_of, strategy_id=strategy_id)
         target_time = target_ids[-1]
-        selected_assets = np.flatnonzero(signals.entry[target_time] != 0)
+        selection = (
+            signals.exit
+            if strategy.meta.get("strategy_role") == "risk"
+            else signals.entry
+        )
+        selected_assets = np.flatnonzero(selection[target_time] != 0)
         if selected_assets.size == 0:
             return StrategyResult(
                 as_of=as_of,

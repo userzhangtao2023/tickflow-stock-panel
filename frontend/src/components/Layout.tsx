@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, Suspense } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { useQuoteStream, useQuoteStreamStatus } from '@/lib/useQuoteStream'
@@ -52,6 +52,9 @@ import { api, type IndexQuote } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { toggleTheme, useTheme } from '@/lib/theme'
 import { setCurrentTotal as setAlertTotal, useUnreadAlerts } from '@/lib/monitorBadge'
+import { MarketFilterTabs } from '@/components/MarketFilterTabs'
+import { useMarketScope } from '@/lib/market-scope'
+import { MobileNavigation, mobilePageTitle } from '@/components/MobileNavigation'
 
 // 品牌色 — 只用于 logo / brand 区域,不影响功能语义色
 const BRAND = '#8B5CF6'
@@ -318,6 +321,8 @@ export function Layout() {
 
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
+  const { market, setMarket } = useMarketScope()
   const version = versionData?.version
   const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
   // Free 档监控限制提示: 可手动关闭, 不持久化 (刷新后恢复显示)
@@ -399,6 +404,7 @@ export function Layout() {
 
   const hiddenIds = new Set(prefs?.nav_hidden ?? [])
   const visibleNavItems = navItems.filter(n => !hiddenIds.has(n.to) && !hiddenIds.has(n.to.replace(/^\/analysis\//, '')))
+  const mobileTitle = mobilePageTitle(location.pathname, visibleNavItems)
 
   const handleToggle = async (enabled: boolean) => {
     // 开启时重新校验档位
@@ -422,7 +428,8 @@ export function Layout() {
   }
 
   return (
-    <div className="h-screen grid grid-cols-[14rem_1fr] bg-base text-foreground overflow-hidden">
+    <div className="h-screen grid grid-cols-1 md:grid-cols-[14rem_1fr] bg-base text-foreground overflow-hidden">
+      <MobileNavigation title={mobileTitle} market={market} onMarketChange={setMarket}>
       <aside className="border-r border-border bg-surface flex flex-col h-full min-h-0 overflow-hidden">
         <div className="px-5 py-5 border-b border-border shrink-0">
           {/* Brand block — 原创 logo + 等宽 wordmark */}
@@ -457,6 +464,21 @@ export function Layout() {
           <AIConfigBadge
             configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
             model={settingsState?.ai_model}
+          />
+        </div>
+
+        <div className="shrink-0 border-b border-border px-3 py-2.5">
+          <div className="mb-1.5 flex items-center justify-between px-0.5">
+            <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted">三市场入口</span>
+            <span className="text-[9px] text-muted/60">CN · HK · US</span>
+          </div>
+          <MarketFilterTabs
+            value={market}
+            includeAll={false}
+            className="w-full justify-center"
+            onChange={(nextMarket) => {
+              if (nextMarket !== 'all') setMarket(nextMarket)
+            }}
           />
         </div>
 
@@ -658,12 +680,13 @@ export function Layout() {
           </div>
         </div>
       </aside>
+      </MobileNavigation>
 
       <motion.main
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-        className="h-full overflow-auto scrollbar-gutter-stable"
+        className="h-full min-w-0 overflow-auto pt-14 md:pt-0 scrollbar-gutter-stable"
       >
         {streamStatus === 'reconnecting' && (
           <div
