@@ -10,7 +10,7 @@ export function mobilePageTitle(
   pathname: string,
   items: ReadonlyArray<{ to: string; label: string }>,
 ): string {
-  return [...items]
+  return [{ to: '/settings', label: '设置' }, ...items]
     .sort((a, b) => b.to.length - a.to.length)
     .find(item => (
       item.to === '/'

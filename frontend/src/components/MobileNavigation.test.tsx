@@ -23,6 +23,7 @@ describe('MobileNavigation', () => {
   it('maps nested routes to the longest matching page title', () => {
     expect(mobilePageTitle('/watchlist/detail', items)).toBe('自选股')
     expect(mobilePageTitle('/', items)).toBe('看板')
+    expect(mobilePageTitle('/settings', items)).toBe('设置')
   })
 
   it('opens the drawer and closes it with Escape', async () => {
