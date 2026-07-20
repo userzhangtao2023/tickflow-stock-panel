@@ -103,34 +103,38 @@ export function StockAnalysis() {
         }
       />
 
-      <div className="w-full px-8 py-6 space-y-6">
+      <div className="w-full space-y-4 px-3 py-4 sm:px-5 lg:space-y-6 lg:px-8 lg:py-6">
         {/* 搜索栏 */}
-        <div className="flex items-center gap-3">
-          <div className="w-72">
+        <div
+          role="region"
+          aria-label="个股分析工具栏"
+          className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center"
+        >
+          <div className="w-full sm:w-72 sm:shrink-0">
             <StockFinancialSearch onSelect={onSelect} />
           </div>
           {symbol && (
-            <>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <button
                 onClick={() => setPreviewSymbol(symbol)}
                 title="查看个股日 K 详情"
-                className="group flex items-center gap-2 text-sm rounded-md px-1.5 py-0.5 -mx-1.5 hover:bg-elevated transition-colors"
+                className="group flex min-w-0 max-w-full items-center gap-2 rounded-md px-1.5 py-0.5 text-sm transition-colors hover:bg-elevated"
               >
-                <span className="text-foreground font-medium group-hover:text-sky-300 transition-colors">{name || symbol}</span>
-                <span className="text-[10px] font-mono text-muted">{symbol}</span>
-                <ExternalLink className="h-3 w-3 text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                <span className="truncate font-medium text-foreground transition-colors group-hover:text-sky-300">{name || symbol}</span>
+                <span className="shrink-0 font-mono text-[10px] text-muted">{symbol}</span>
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
               </button>
               <button
                 onClick={handleAnalyze}
                 disabled={checking}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn bg-gradient-to-r from-sky-500/25 to-blue-500/15 border border-sky-400/30 text-sky-300 text-xs font-medium hover:from-sky-500/35 hover:to-blue-500/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-btn border border-sky-400/30 bg-gradient-to-r from-sky-500/25 to-blue-500/15 px-3 py-1.5 text-xs font-medium text-sky-300 transition-all hover:from-sky-500/35 hover:to-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                 AI 个股分析
               </button>
               <button
                 onClick={() => toast('点位提醒功能开发中,敬请期待', 'error')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn border border-border/40 bg-elevated/40 text-muted text-xs font-medium hover:border-border/70 hover:text-secondary transition-all"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-btn border border-border/40 bg-elevated/40 px-3 py-1.5 text-xs font-medium text-muted transition-all hover:border-border/70 hover:text-secondary"
                 title="当价格触及关键价位时提醒(开发中)"
               >
                 <Bell className="h-3.5 w-3.5" />
@@ -139,12 +143,16 @@ export function StockAnalysis() {
                   开发中
                 </span>
               </button>
-            </>
+            </div>
           )}
         </div>
 
         {/* 主体:左侧当前个股看板 + 右侧常驻历史报告 */}
-        <div className="grid grid-cols-[1fr_288px] gap-6 items-start">
+        <div
+          role="region"
+          aria-label="个股分析内容"
+          className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_288px] lg:gap-6"
+        >
           <div className="min-w-0">
             {!symbol ? (
               <EmptyState
@@ -261,7 +269,7 @@ function HistorySidebar() {
   const { reports, loaded } = useHistoryReports()
 
   return (
-    <aside className="self-start sticky top-0">
+    <aside aria-label="历史报告" className="self-start lg:sticky lg:top-0">
       <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
         <div className="px-3 py-2.5 border-b border-border/40 flex items-center gap-2">
           <HistoryIcon className="h-3.5 w-3.5 text-sky-400 shrink-0" />
