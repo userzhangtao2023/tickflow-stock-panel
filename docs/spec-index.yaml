@@ -1,0 +1,11 @@
+version: 1
+project_status: configured
+specifications:
+  - id: SPEC-GLOBAL-INDEX-REALTIME-001
+    path: docs/specs/global-index-realtime.md
+    status: authoritative
+    requirements:
+      - REQ-GLOBAL-INDEX-API-001
+      - REQ-GLOBAL-INDEX-UI-001
+conflicts: []
+exceptions: []

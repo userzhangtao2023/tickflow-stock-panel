@@ -126,6 +126,7 @@ function IndicesMarket({ market }: { market: MarketCode }) {
     queryFn: () => api.indexQuotes(quoteSymbols),
     enabled: quoteSymbols.length > 0,
     placeholderData: (prev) => prev,
+    refetchInterval: 6_000,
   })
 
   const daily = useQuery({

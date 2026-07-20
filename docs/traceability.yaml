@@ -1,0 +1,16 @@
+version: 1
+requirements:
+  - id: REQ-GLOBAL-INDEX-API-001
+    specification: SPEC-GLOBAL-INDEX-REALTIME-001
+    implementation: backend/app/api/intraday.py
+    tests: {path: backend/tests/test_intraday_index_quotes.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/global-index-realtime.md, type: semantic-acceptance}
+      - {path: docs/reviews/global-index-realtime.md, type: independent-review}
+  - id: REQ-GLOBAL-INDEX-UI-001
+    specification: SPEC-GLOBAL-INDEX-REALTIME-001
+    implementation: frontend/src/pages/Indices.tsx
+    tests: {path: frontend/src/pages/indices-realtime.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/global-index-realtime.md, type: semantic-acceptance}
+      - {path: docs/reviews/global-index-realtime.md, type: independent-review}
