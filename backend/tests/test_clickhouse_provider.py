@@ -124,6 +124,18 @@ def test_realtime_normalizes_percentage_and_timestamp() -> None:
     assert "limit 1 by symbol" in query.queries[-1].lower()
 
 
+def test_realtime_limits_latest_rows_to_current_shanghai_date() -> None:
+    query = QueryRecorder([])
+    provider = ClickHouseProvider(query_fn=query)
+
+    provider.get_realtime(symbols=["000001.SZ"])
+
+    sql = query.queries[-1]
+    assert "snapshot_minute >= toStartOfDay(now('Asia/Shanghai'))" in sql
+    assert "snapshot_minute < toStartOfDay(now('Asia/Shanghai')) + INTERVAL 1 DAY" in sql
+    assert "AND symbol IN ('000001.SZ')" in sql
+
+
 def test_minute_bars_are_returned_in_market_local_time() -> None:
     query = QueryRecorder([
         {

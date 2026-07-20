@@ -364,12 +364,18 @@ class ClickHouseProvider:
         universes: list[str] | None = None,
         symbols: list[str] | None = None,
     ) -> list[dict]:
-        symbol_filter = f"WHERE symbol IN {_symbols_sql(symbols)}" if symbols else ""
+        filters = [
+            "snapshot_minute >= toStartOfDay(now('Asia/Shanghai'))",
+            "snapshot_minute < toStartOfDay(now('Asia/Shanghai')) + INTERVAL 1 DAY",
+        ]
+        if symbols:
+            filters.append(f"symbol IN {_symbols_sql(symbols)}")
+        where_clause = "WHERE " + "\n              AND ".join(filters)
         sql = f"""
             SELECT symbol, market, snapshot_minute, last_done, prev_close,
                    open, high, low, change_value, change_percentage, volume, turnover
             FROM {self._table("lb_realtime_quotes")}
-            {symbol_filter}
+            {where_clause}
             ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
             LIMIT 1 BY symbol
         """
