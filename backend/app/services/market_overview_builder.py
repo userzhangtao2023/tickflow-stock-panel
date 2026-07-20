@@ -103,6 +103,8 @@ def _overlay_realtime_rows(rows: list[dict], quotes: list[dict]) -> list[dict]:
         if quote:
             last_price = _finite(quote.get("last_price"))
             prev_close = _finite(quote.get("prev_close"))
+            if prev_close in (None, 0):
+                prev_close = _finite(merged.get("close"))
             change_pct = _finite(quote.get("change_pct"))
             if change_pct is None and last_price is not None and prev_close not in (None, 0):
                 change_pct = (last_price - prev_close) / prev_close

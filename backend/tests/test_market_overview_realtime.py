@@ -40,7 +40,7 @@ def test_latest_us_overview_aggregates_realtime_price_amount_and_computed_change
                     "symbol": "AAPL.US",
                     "market": "us",
                     "last_price": 110.0,
-                    "prev_close": 100.0,
+                    "prev_close": None,
                     "change_pct": None,
                     "volume": 99.0,
                     "amount": 999.0,

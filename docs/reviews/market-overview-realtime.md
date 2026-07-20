@@ -7,7 +7,7 @@
 ## 需求到证据核对
 
 - 最新视图以最近日线行限定股票范围，保留均线等技术字段；实时层只覆盖 `close`、`change_pct`、`volume`、`amount`，实时空值不覆盖日线有效值。
-- 实时源未提供 `change_pct` 时，使用 `(last_price - prev_close) / prev_close` 补算，保持项目小数制约定。
+- 实时源未提供 `change_pct` 时，使用 `(last_price - prev_close) / prev_close` 补算；实时 `prev_close` 也缺失时采用覆盖前的最近日线收盘，保持项目小数制约定。该分支由生产长桥数据抽查发现，并由失败测试复现后修复。
 - 实时覆盖发生在所有涨跌、成交额、排行和板块聚合之前，行为测试直接验证聚合输出，不以轮询或快照代替。
 - 显式 `as_of` 路径不解析、不调用实时 provider，行为测试用会主动报错的 provider 验证隔离。
 
