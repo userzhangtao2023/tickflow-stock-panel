@@ -48,3 +48,10 @@ requirements:
     acceptance:
       - {path: docs/acceptance/market-overview-realtime.md, type: semantic-acceptance}
       - {path: docs/reviews/market-overview-realtime.md, type: independent-review}
+  - id: REQ-STOCK-DETAIL-REALTIME-CANDLE-001
+    specification: SPEC-STOCK-DETAIL-REALTIME-CANDLE-001
+    implementation: backend/app/api/kline.py
+    tests: {path: backend/tests/test_stock_detail_realtime_candle.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/stock-detail-realtime-candle.md, type: semantic-acceptance}
+      - {path: docs/reviews/stock-detail-realtime-candle.md, type: independent-review}

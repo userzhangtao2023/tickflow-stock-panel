@@ -19,5 +19,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-MARKET-OVERVIEW-REALTIME-001
+  - id: SPEC-STOCK-DETAIL-REALTIME-CANDLE-001
+    path: docs/specs/stock-detail-realtime-candle.md
+    status: authoritative
+    requirements:
+      - REQ-STOCK-DETAIL-REALTIME-CANDLE-001
 conflicts: []
 exceptions: []
