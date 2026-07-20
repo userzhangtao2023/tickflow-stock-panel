@@ -11,6 +11,7 @@ quote_service,depth_service}` 的依赖改为显式参数。
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from datetime import date
@@ -26,6 +27,8 @@ from app.services.market_scope import (
     normalize_market,
 )
 from app.services.screener import ScreenerService
+
+logger = logging.getLogger(__name__)
 
 # ================================================================
 # 常量(与 overview.py 保持同步;复盘复盘仅 A 股核心指数)
@@ -250,7 +253,14 @@ def _symbol_keys(row: dict, config: ExtConfig) -> list[str]:
     return keys
 
 
-def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: int | None = None) -> dict:
+def _dimension_rank(
+    rows: list[dict],
+    repo,
+    kind: str,
+    limit: int = 5,
+    level: int | None = None,
+    dimension_rows: list[dict] | None = None,
+) -> dict:
     if not rows:
         return {"leading": [], "lagging": []}
 
@@ -262,27 +272,39 @@ def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: in
         quote_map[symbol] = row
         quote_map[symbol.split(".", 1)[0]] = row
 
-    store = ExtConfigStore(repo.store.data_dir)
     groups: dict[str, dict[str, dict]] = {}
-    for config in store.load_all():
-        field = _dimension_field(config, kind)
-        if not field:
-            continue
-        for ext_row in _read_ext_rows(repo.store.data_dir, config, field):
-            quote = None
-            for key in _symbol_keys(ext_row, config):
-                quote = quote_map.get(key)
-                if quote:
-                    break
-            if not quote:
+    if dimension_rows is not None:
+        configured_rows = [
+            (item, kind, [str(item.get("symbol") or "").strip().upper()])
+            for item in dimension_rows
+        ]
+    else:
+        configured_rows = []
+        store = ExtConfigStore(repo.store.data_dir)
+        for config in store.load_all():
+            field = _dimension_field(config, kind)
+            if not field:
                 continue
-            symbol = str(quote.get("symbol") or "")
-            for value in _dimension_values(ext_row.get(field)):
-                # 行业按 "-" 拆分级: "银行-银行-股份制银行" → level=2 取"银行"(二级)
-                if level is not None and "-" in value:
-                    parts = value.split("-")
-                    value = parts[level - 1] if level <= len(parts) else parts[-1]
-                groups.setdefault(value, {})[symbol] = quote
+            configured_rows.extend(
+                (item, field, _symbol_keys(item, config))
+                for item in _read_ext_rows(repo.store.data_dir, config, field)
+            )
+
+    for dimension_row, field, symbol_keys in configured_rows:
+        quote = None
+        for key in symbol_keys:
+            quote = quote_map.get(key) or quote_map.get(key.split(".", 1)[0])
+            if quote:
+                break
+        if not quote:
+            continue
+        symbol = str(quote.get("symbol") or "")
+        for value in _dimension_values(dimension_row.get(field)):
+            # 行业按 "-" 拆分级: "银行-银行-股份制银行" → level=2 取"银行"(二级)
+            if level is not None and "-" in value:
+                parts = value.split("-")
+                value = parts[level - 1] if level <= len(parts) else parts[-1]
+            groups.setdefault(value, {})[symbol] = quote
 
     items = []
     for name, by_symbol in groups.items():
@@ -368,6 +390,7 @@ def build_market_overview(
     depth_service=None,
     as_of: date | None = None,
     market: str = "cn",
+    dimension_provider=None,
 ) -> dict:
     """装配市场总览(与原 overview._build_overview 行为一致)。
 
@@ -531,8 +554,38 @@ def build_market_overview(
     avg_vol_ratio = sum(vol_ratios) / len(vol_ratios) if vol_ratios else 1
     high_vol_ratio = sum(1 for v in vol_ratios if v >= 1.5)
 
-    concept_rank = _dimension_rank(rows, repo, "concept")
-    industry_rank = _dimension_rank(rows, repo, "industry", level=2)
+    if market == "cn":
+        concept_rank = _dimension_rank(rows, repo, "concept")
+        industry_rank = _dimension_rank(rows, repo, "industry", level=2)
+    else:
+        try:
+            if dimension_provider is None:
+                from app.plugins.clickhouse.provider import ClickHouseProvider
+
+                dimension_provider = ClickHouseProvider()
+            concept_rows = dimension_provider.get_market_concepts(market).get("rows", [])
+            industry_rows = dimension_provider.get_market_industries(market).get("rows", [])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "market overview dimensions load failed for %s: %s",
+                market,
+                type(exc).__name__,
+            )
+            concept_rows = []
+            industry_rows = []
+        concept_rank = _dimension_rank(
+            rows,
+            repo,
+            "concept",
+            dimension_rows=concept_rows,
+        )
+        industry_rank = _dimension_rank(
+            rows,
+            repo,
+            "industry",
+            level=2,
+            dimension_rows=industry_rows,
+        )
 
     strong_diff_pct = (strong_up - strong_down) / total * 100 if total else 0
     high_vol_pct = high_vol_ratio / total * 100 if total else 0
