@@ -44,5 +44,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-STOCK-AI-ORDER-FLOW-001
+  - id: SPEC-STOCK-ANALYSIS-REPORT-COPY-001
+    path: docs/specs/stock-analysis-report-copy.md
+    status: authoritative
+    requirements:
+      - REQ-STOCK-ANALYSIS-REPORT-COPY-001
 conflicts: []
 exceptions: []

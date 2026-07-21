@@ -97,3 +97,14 @@ requirements:
     acceptance:
       - {path: docs/acceptance/stock-ai-order-flow.md, type: semantic-acceptance}
       - {path: docs/reviews/stock-ai-order-flow.md, type: independent-review}
+  - id: REQ-STOCK-ANALYSIS-REPORT-COPY-001
+    specification: SPEC-STOCK-ANALYSIS-REPORT-COPY-001
+    implementation:
+      - frontend/src/lib/copyText.ts
+      - frontend/src/components/stock-analysis/StockAnalysisDialog.tsx
+    tests:
+      - {path: frontend/src/lib/copyText.test.ts, type: executable-test}
+      - {path: frontend/src/components/stock-analysis/StockAnalysisDialog.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/stock-analysis-report-copy.md, type: semantic-acceptance}
+      - {path: docs/reviews/stock-analysis-report-copy.md, type: independent-review}
