@@ -442,6 +442,7 @@ def _maybe_inject_live_candle(
         "amount": q.get("amount"),
         "change_pct": q.get("change_pct"),
         "is_live": True,
+        "quote_timestamp": q.get("timestamp"),
     }
     prev_close = q.get("prev_close")
     if not prev_close and rows:

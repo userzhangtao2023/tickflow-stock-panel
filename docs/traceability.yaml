@@ -78,3 +78,13 @@ requirements:
     acceptance:
       - {path: docs/acceptance/limit-ladder-realtime.md, type: semantic-acceptance}
       - {path: docs/reviews/limit-ladder-realtime.md, type: independent-review}
+  - id: REQ-STOCK-AI-REALTIME-001
+    specification: SPEC-STOCK-AI-REALTIME-001
+    implementation:
+      - backend/app/api/kline.py
+      - backend/app/api/stock_analysis.py
+      - backend/app/services/stock_analyzer.py
+    tests: {path: backend/tests/test_stock_analysis_realtime.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/stock-ai-realtime.md, type: semantic-acceptance}
+      - {path: docs/reviews/stock-ai-realtime.md, type: independent-review}

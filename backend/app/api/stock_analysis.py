@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 import polars as pl
@@ -27,6 +28,46 @@ from app.services.stock_analyzer import analyze_stock_stream
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stock-analysis", tags=["stock-analysis"])
+
+
+@dataclass(frozen=True)
+class AnalysisKline:
+    frame: pl.DataFrame
+    data_as_of: str | None
+    is_realtime: bool
+    quote_timestamp: int | float | None
+
+
+def _load_analysis_kline(request: Request, symbol: str, days: int) -> AnalysisKline:
+    """Load persisted daily bars and overlay the configured current quote."""
+    from app.api.kline import _maybe_inject_live_candle
+
+    repo = request.app.state.repo
+    end = date.today()
+    start = end - timedelta(days=days * 2)
+    asset_type = repo.resolve_asset_type(symbol)
+    frame = repo.get_daily_asset(asset_type, symbol, start, end)
+    rows = _maybe_inject_live_candle(
+        request,
+        symbol,
+        frame.to_dicts() if not frame.is_empty() else [],
+        asset_type,
+        end_date=end,
+    )
+    for row in rows:
+        value = row.get("date")
+        if isinstance(value, str):
+            row["date"] = date.fromisoformat(value)
+    merged = pl.from_dicts(rows, infer_schema_length=None) if rows else pl.DataFrame()
+    if not merged.is_empty() and "date" in merged.columns:
+        merged = merged.sort("date").tail(days)
+    latest = merged.tail(1).to_dicts()[0] if not merged.is_empty() else {}
+    return AnalysisKline(
+        frame=merged,
+        data_as_of=str(latest["date"]) if latest.get("date") is not None else None,
+        is_realtime=bool(latest.get("is_live")),
+        quote_timestamp=latest.get("quote_timestamp"),
+    )
 
 
 def _to_float_list(series: pl.Series) -> list:
@@ -118,17 +159,17 @@ def get_levels(
     if not symbol:
         raise HTTPException(400, "symbol 不能为空")
 
-    repo = request.app.state.repo
-    end = date.today()
-    start = end - timedelta(days=days * 2)
-    # 按资产类型分流: ETF/指数走独立 enriched 存储, 股票保持原路径
-    df = repo.get_daily_asset(repo.resolve_asset_type(symbol), symbol, start, end)
+    analysis_kline = _load_analysis_kline(request, symbol, days)
+    df = analysis_kline.frame
     if df.is_empty():
         return {"levels": {"sr": [], "pivot": [], "extreme": [],
                            "boll": [], "keltner_s": [], "keltner_m": [], "keltner_l": [],
                            "atr_stop": [], "gap": [], "fib": [], "round": []},
                 "close": None, "summary": "无数据", "symbol": symbol,
-                "dates": [], "series": {}}
+                "dates": [], "series": {},
+                "data_as_of": analysis_kline.data_as_of,
+                "is_realtime": analysis_kline.is_realtime,
+                "quote_timestamp": analysis_kline.quote_timestamp}
 
     levels = compute_levels(df)
     close = float(df.tail(1)["close"][0]) if "close" in df.columns else None
@@ -142,6 +183,9 @@ def get_levels(
         "symbol": symbol,
         "dates": [str(d) for d in dates],
         "series": series,
+        "data_as_of": analysis_kline.data_as_of,
+        "is_realtime": analysis_kline.is_realtime,
+        "quote_timestamp": analysis_kline.quote_timestamp,
     }
 
 
@@ -164,9 +208,20 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
 
     repo = request.app.state.repo
     data_dir = repo.store.data_dir
+    analysis_kline = _load_analysis_kline(request, req.symbol, days=90)
 
     async def stream_gen():
-        async for chunk in analyze_stock_stream(repo, data_dir, req.symbol, req.focus, req.market):
+        async for chunk in analyze_stock_stream(
+            repo,
+            data_dir,
+            req.symbol,
+            req.focus,
+            req.market,
+            kline_df=analysis_kline.frame,
+            data_as_of=analysis_kline.data_as_of,
+            is_realtime=analysis_kline.is_realtime,
+            quote_timestamp=analysis_kline.quote_timestamp,
+        ):
             yield chunk + "\n"
 
     return StreamingResponse(

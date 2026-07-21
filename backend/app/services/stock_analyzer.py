@@ -352,6 +352,10 @@ async def analyze_stock_stream(
     symbol: str,
     focus: str = "",
     market: str | None = None,
+    kline_df: pl.DataFrame | None = None,
+    data_as_of: str | None = None,
+    is_realtime: bool = False,
+    quote_timestamp: int | float | None = None,
 ) -> AsyncIterator[str]:
     """流式个股分析:yield 出每个 NDJSON 事件。
 
@@ -362,7 +366,7 @@ async def analyze_stock_stream(
       {"type":"done"}
     """
     # 1. 加载 K 线
-    df = _load_kline(repo, symbol)
+    df = kline_df if kline_df is not None else _load_kline(repo, symbol)
     if df.is_empty():
         yield json.dumps({
             "type": "error",
@@ -384,6 +388,9 @@ async def analyze_stock_stream(
         "summary": summarize_levels(levels, close),
         "levels": levels,
         "close": close,
+        "data_as_of": data_as_of,
+        "is_realtime": is_realtime,
+        "quote_timestamp": quote_timestamp,
     }, ensure_ascii=False)
 
     # 5+6. 构建提示词 + 流式调用 LLM(整体 try-except,任何异常都 yield error,避免前端卡死)
