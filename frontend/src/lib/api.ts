@@ -384,6 +384,7 @@ export interface OverviewDimensionRankItem {
 
 export interface OverviewMarket {
   as_of: string | null
+  realtime_as_of?: string | null
   market: MarketCode
   currency: string
   features?: { limit_ladder: boolean; cn_market_rules: boolean }

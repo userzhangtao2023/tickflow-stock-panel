@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, Database, Flame, Gauge, Info, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
+import { resolveDashboardDateState, selectedDateForRequest } from '@/lib/dashboard-date'
 import { api, type MarketSnapshotRow, type OverviewDimensionRankItem, type OverviewMarket, type AlertEvent } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtBigNum, fmtPct } from '@/lib/format'
@@ -652,8 +653,14 @@ export function Dashboard() {
   const strongUp = data.breadth.strong_up ?? 0
   const strongDown = data.breadth.strong_down ?? 0
   const latestDate = dataStatus.data?.enriched?.latest_date ?? null
-  const currentDate = selectedDate ?? data.as_of ?? ''
-  const quoteRunning = (!selectedDate || selectedDate === latestDate) && data.quote_status?.running
+  const realtimeAsOf = data.realtime_as_of ?? null
+  const { currentDate, maxDate } = resolveDashboardDateState(
+    latestDate,
+    data.as_of,
+    realtimeAsOf,
+    selectedDate,
+  )
+  const quoteRunning = !selectedDate && data.quote_status?.running
   // 实时模式: none / watchlist / full_market。
   // watchlist (Free 档) 仅自选 ≤5 只实时, 看板呈现的大盘数据实为盘后快照, 需提示避免误读。
   const quoteMode = data.quote_status?.mode as ('none' | 'watchlist' | 'full_market') | undefined
@@ -705,9 +712,9 @@ export function Dashboard() {
           {currentDate ? (
             <DatePicker
               value={currentDate}
-              onChange={setSelectedDate}
+              onChange={(value) => setSelectedDate(selectedDateForRequest(value, realtimeAsOf))}
               min={dataStatus.data?.enriched?.earliest_date ?? undefined}
-              max={latestDate ?? undefined}
+              max={maxDate ?? undefined}
               className="w-32"
             />
           ) : (

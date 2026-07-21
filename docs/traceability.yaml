@@ -55,3 +55,15 @@ requirements:
     acceptance:
       - {path: docs/acceptance/stock-detail-realtime-candle.md, type: semantic-acceptance}
       - {path: docs/reviews/stock-detail-realtime-candle.md, type: independent-review}
+  - id: REQ-MARKET-OVERVIEW-LIVE-DATE-001
+    specification: SPEC-MARKET-OVERVIEW-LIVE-DATE-001
+    implementation:
+      - backend/app/services/market_overview_builder.py
+      - frontend/src/pages/Dashboard.tsx
+      - frontend/src/lib/dashboard-date.ts
+    tests:
+      - {path: backend/tests/test_market_overview_realtime.py, type: executable-test}
+      - {path: frontend/src/lib/dashboard-date.test.ts, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/market-overview-live-date.md, type: semantic-acceptance}
+      - {path: docs/reviews/market-overview-live-date.md, type: independent-review}

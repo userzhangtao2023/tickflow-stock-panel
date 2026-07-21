@@ -1,8 +1,20 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
 from app.services import market_overview_builder as builder
+
+
+def test_realtime_trade_date_uses_market_timezone() -> None:
+    timestamp = int(
+        datetime(2026, 7, 21, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp() * 1000
+    )
+    rows = [{"timestamp": timestamp}]
+
+    assert builder._realtime_trade_date(rows, "cn") == date(2026, 7, 21)
+    assert builder._realtime_trade_date(rows, "hk") == date(2026, 7, 21)
+    assert builder._realtime_trade_date(rows, "us") == date(2026, 7, 20)
 
 
 class _Screener:
@@ -44,6 +56,7 @@ def test_latest_us_overview_aggregates_realtime_price_amount_and_computed_change
                     "change_pct": None,
                     "volume": 99.0,
                     "amount": 999.0,
+                    "timestamp": int(datetime(2026, 7, 20, 10, tzinfo=ZoneInfo("America/New_York")).timestamp() * 1000),
                 },
                 {
                     "symbol": "MSFT.US",
@@ -53,6 +66,7 @@ def test_latest_us_overview_aggregates_realtime_price_amount_and_computed_change
                     "change_pct": None,
                     "volume": 88.0,
                     "amount": 888.0,
+                    "timestamp": int(datetime(2026, 7, 20, 10, tzinfo=ZoneInfo("America/New_York")).timestamp() * 1000),
                 },
             ]
 
@@ -73,6 +87,7 @@ def test_latest_us_overview_aggregates_realtime_price_amount_and_computed_change
     assert result["top_gainers"][0]["close"] == 110.0
     assert result["top_gainers"][0]["change_pct"] == 0.1
     assert result["turnover_leaders"][0]["amount"] == 999.0
+    assert result["realtime_as_of"] == "2026-07-20"
 
 
 def test_historical_us_overview_does_not_read_realtime_provider(monkeypatch) -> None:

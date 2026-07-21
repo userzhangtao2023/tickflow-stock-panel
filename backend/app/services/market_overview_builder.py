@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 import math
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
@@ -29,6 +30,19 @@ from app.services.market_scope import (
 from app.services.screener import ScreenerService
 
 logger = logging.getLogger(__name__)
+
+_MARKET_TIMEZONES = {
+    "cn": ZoneInfo("Asia/Shanghai"),
+    "hk": ZoneInfo("Asia/Hong_Kong"),
+    "us": ZoneInfo("America/New_York"),
+}
+
+
+def _realtime_trade_date(rows: list[dict], market: str) -> date | None:
+    timestamps = [row.get("timestamp") for row in rows if row.get("timestamp")]
+    if not timestamps:
+        return None
+    return datetime.fromtimestamp(max(timestamps) / 1000.0, tz=_MARKET_TIMEZONES[market]).date()
 
 # ================================================================
 # 常量(与 overview.py 保持同步;复盘复盘仅 A 股核心指数)
@@ -436,6 +450,7 @@ def build_market_overview(
     # 其余装配仍以解析出的真实日期为准。显式指定日期(历史复盘)时才回退数据库。
     explicit_as_of = as_of is not None
     as_of = as_of or market_latest_date(repo, market)
+    realtime_as_of = None
     status = _quote_status(quote_service)
     # 当前本地指数表仅覆盖 A 股核心指数；港美股宁可明确为空，也不能泄漏 A 股指数。
     indices = _index_quotes(repo, quote_service, None if not explicit_as_of else as_of) if market == "cn" else []
@@ -494,10 +509,9 @@ def build_market_overview(
         if realtime_provider is not None:
             try:
                 symbols = [str(row.get("symbol") or "") for row in rows if row.get("symbol")]
-                rows = _overlay_realtime_rows(
-                    rows,
-                    realtime_provider.get_realtime(symbols=symbols) or [],
-                )
+                realtime_rows = realtime_provider.get_realtime(symbols=symbols) or []
+                realtime_as_of = _realtime_trade_date(realtime_rows, market)
+                rows = _overlay_realtime_rows(rows, realtime_rows)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "market overview realtime overlay failed for %s: %s",
@@ -676,6 +690,7 @@ def build_market_overview(
 
     return _json_safe({
         "as_of": str(as_of),
+        "realtime_as_of": str(realtime_as_of) if realtime_as_of else None,
         "market": market,
         "currency": market_currency(market),
         "features": {"limit_ladder": market == "cn", "cn_market_rules": market == "cn"},

@@ -24,5 +24,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-STOCK-DETAIL-REALTIME-CANDLE-001
+  - id: SPEC-MARKET-OVERVIEW-LIVE-DATE-001
+    path: docs/specs/market-overview-live-date.md
+    status: authoritative
+    requirements:
+      - REQ-MARKET-OVERVIEW-LIVE-DATE-001
 conflicts: []
 exceptions: []
