@@ -88,3 +88,12 @@ requirements:
     acceptance:
       - {path: docs/acceptance/stock-ai-realtime.md, type: semantic-acceptance}
       - {path: docs/reviews/stock-ai-realtime.md, type: independent-review}
+  - id: REQ-STOCK-AI-ORDER-FLOW-001
+    specification: SPEC-STOCK-AI-ORDER-FLOW-001
+    implementation:
+      - backend/app/api/stock_analysis.py
+      - backend/app/services/stock_analyzer.py
+    tests: {path: backend/tests/test_stock_ai_order_flow.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/stock-ai-order-flow.md, type: semantic-acceptance}
+      - {path: docs/reviews/stock-ai-order-flow.md, type: independent-review}

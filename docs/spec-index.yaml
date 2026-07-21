@@ -39,5 +39,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-STOCK-AI-REALTIME-001
+  - id: SPEC-STOCK-AI-ORDER-FLOW-001
+    path: docs/specs/stock-ai-order-flow.md
+    status: authoritative
+    requirements:
+      - REQ-STOCK-AI-ORDER-FLOW-001
 conflicts: []
 exceptions: []

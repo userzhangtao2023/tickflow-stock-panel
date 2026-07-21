@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import AsyncIterator
+from urllib.parse import quote
 
+import httpx
 import polars as pl
 
 from app.indicators.levels import compute_levels, summarize_levels
@@ -71,6 +74,66 @@ def _build_capital_metrics(df: pl.DataFrame) -> dict[str, float]:
             sum(value <= current for value in window60) / len(window60), 4
         ),
     }
+
+
+def _build_order_flow_context(snapshot: dict, series: dict) -> dict:
+    """Keep observable order-size flows and discard upstream advice text."""
+    if not snapshot.get("available"):
+        return {}
+
+    def bucket(name: str) -> dict:
+        return {
+            "in": snapshot.get(f"{name}In"),
+            "out": snapshot.get(f"{name}Out"),
+            "net": snapshot.get(f"{name}Net"),
+        }
+
+    summary = series.get("summary") if isinstance(series.get("summary"), dict) else {}
+    interpretation = series.get("interpretation") if isinstance(series.get("interpretation"), dict) else {}
+    recent = interpretation.get("recentChange") if isinstance(interpretation.get("recentChange"), dict) else {}
+    return {
+        "as_of": snapshot.get("snapshotMinute") or snapshot.get("capitalUpdatedAt"),
+        "amount_unit": "万（对应市场币种）",
+        "large": bucket("large"),
+        "medium": bucket("medium"),
+        "small": bucket("small"),
+        "total_in": snapshot.get("totalIn"),
+        "total_out": snapshot.get("totalOut"),
+        "total_net": snapshot.get("totalNet"),
+        "large_net_ratio": snapshot.get("largeNetRatio"),
+        "signal": snapshot.get("signalLabel") or snapshot.get("signal"),
+        "session_summary": {
+            key: summary.get(key)
+            for key in ("label", "priceChange", "totalNetChange", "largeNetChange", "reason")
+        },
+        "recent_change": {
+            key: recent.get(key)
+            for key in ("timeRange", "judgement", "priceChange", "totalNetChange", "largeNetChange")
+        },
+    }
+
+
+def _load_order_flow_context(symbol: str) -> dict:
+    endpoint = os.getenv("LONGBRIDGE_API_URL", "").strip().rstrip("/")
+    if not endpoint:
+        return {}
+    timeout = float(os.getenv("LONGBRIDGE_API_TIMEOUT_SECONDS", "20"))
+    try:
+        snapshot_response = httpx.get(
+            f"{endpoint}/api/realtime/capital/latest",
+            params={"symbol": symbol},
+            timeout=timeout,
+        )
+        snapshot_response.raise_for_status()
+        series_response = httpx.get(
+            f"{endpoint}/api/stocks/{quote(symbol, safe='')}/capital-series",
+            timeout=timeout,
+        )
+        series_response.raise_for_status()
+        return _build_order_flow_context(snapshot_response.json(), series_response.json())
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logger.warning("stock AI order flow unavailable for %s: %s", symbol, type(exc).__name__)
+        return {}
 
 
 # ================================================================
@@ -258,6 +321,10 @@ def _build_system_prompt(market: str) -> str:
         f"## 市场口径\n\n本次标的是{market_name},价格及成交额币种为{currency}。"
         "所有结论必须使用该市场的交易制度与行情语义。\n\n"
         + prompt
+        + "\n\n## 大中小单资金语义边界\n"
+        + "大单、中单、小单仅表示成交金额分档，不代表可确认的交易者身份。"
+        + "不得直接断言为机构、主力或特定主体买卖；只能描述分档净流入/流出、资金分歧、"
+        + "价格资金背离或疑似承接，并引用具体数值与数据时间。\n"
     )
 
 
@@ -274,6 +341,7 @@ def _build_user_prompt(
     focus: str,
     market: str = "cn",
     capital_metrics: dict[str, float] | None = None,
+    order_flow_context: dict | None = None,
 ) -> str:
     """构建用户消息:标的 + 价位摘要 + 技术指标 JSON + 财务摘要 + 关注点。"""
     resolved_market = _resolve_market(symbol, market)
@@ -296,6 +364,15 @@ def _build_user_prompt(
             "以下是成交额资金活跃度统计(JSON,金额币种遵循上述市场口径):",
             "```json",
             json.dumps(capital_metrics, ensure_ascii=False),
+            "```",
+        ])
+
+    if order_flow_context:
+        parts.extend([
+            "",
+            "以下是盘中大中小单资金数据(JSON；按成交金额分档，不代表机构身份):",
+            "```json",
+            json.dumps(order_flow_context, ensure_ascii=False),
             "```",
         ])
 
@@ -356,6 +433,7 @@ async def analyze_stock_stream(
     data_as_of: str | None = None,
     is_realtime: bool = False,
     quote_timestamp: int | float | None = None,
+    order_flow_context: dict | None = None,
 ) -> AsyncIterator[str]:
     """流式个股分析:yield 出每个 NDJSON 事件。
 
@@ -391,6 +469,8 @@ async def analyze_stock_stream(
         "data_as_of": data_as_of,
         "is_realtime": is_realtime,
         "quote_timestamp": quote_timestamp,
+        "order_flow_available": bool(order_flow_context),
+        "order_flow_as_of": (order_flow_context or {}).get("as_of"),
     }, ensure_ascii=False)
 
     # 5+6. 构建提示词 + 流式调用 LLM(整体 try-except,任何异常都 yield error,避免前端卡死)
@@ -408,6 +488,7 @@ async def analyze_stock_stream(
             focus,
             resolved_market,
             _build_capital_metrics(df),
+            order_flow_context,
         )
         async for delta in stream_ai_text(
             [

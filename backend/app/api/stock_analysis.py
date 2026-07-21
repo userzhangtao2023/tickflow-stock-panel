@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from app.indicators.levels import compute_levels, summarize_levels
 from app.services import stock_reports
-from app.services.stock_analyzer import analyze_stock_stream
+from app.services.stock_analyzer import analyze_stock_stream, _load_order_flow_context
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,7 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
     repo = request.app.state.repo
     data_dir = repo.store.data_dir
     analysis_kline = _load_analysis_kline(request, req.symbol, days=90)
+    order_flow_context = _load_order_flow_context(req.symbol)
 
     async def stream_gen():
         async for chunk in analyze_stock_stream(
@@ -221,6 +222,7 @@ async def analyze_stock(request: Request, req: AnalyzeRequest):
             data_as_of=analysis_kline.data_as_of,
             is_realtime=analysis_kline.is_realtime,
             quote_timestamp=analysis_kline.quote_timestamp,
+            order_flow_context=order_flow_context,
         ):
             yield chunk + "\n"
 
