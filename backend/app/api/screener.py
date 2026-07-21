@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.plugins.clickhouse.provider import ClickHouseProvider
+from app.price_limits import polars_is_risk_warning_name, polars_limit_price, polars_price_limit_pct
 from app.services import strategy_cache
 from app.services.screener import ScreenerService
 from app.strategy import config as strategy_config
@@ -22,6 +23,63 @@ from app.strategy import config as strategy_config
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/screener", tags=["screener"])
+
+
+def _overlay_live_limit_signals(previous, quotes: list[dict], trade_date: date):
+    import polars as pl
+
+    if previous.is_empty() or not quotes:
+        return pl.DataFrame()
+    live = pl.DataFrame([{
+        "symbol": row.get("symbol"),
+        "open": row.get("open"),
+        "high": row.get("high"),
+        "low": row.get("low"),
+        "close": row.get("last_price"),
+        "volume": row.get("volume"),
+        "amount": row.get("amount"),
+        "quote_prev_close": row.get("prev_close"),
+        "quote_change_pct": row.get("change_pct"),
+    } for row in quotes if row.get("symbol") and row.get("last_price")])
+    if live.is_empty():
+        return pl.DataFrame()
+
+    base_columns = [
+        column for column in (
+            "symbol", "name", "close", "consecutive_limit_ups", "consecutive_limit_downs"
+        ) if column in previous.columns
+    ]
+    base = previous.select(base_columns).rename({
+        "close": "_previous_close",
+        "consecutive_limit_ups": "_previous_limit_ups",
+        "consecutive_limit_downs": "_previous_limit_downs",
+    })
+    frame = live.join(base, on="symbol", how="inner").with_columns([
+        pl.lit(trade_date).alias("date"),
+        pl.coalesce("quote_prev_close", "_previous_close").cast(pl.Float64).alias("_prev"),
+        polars_is_risk_warning_name(pl.col("name")).alias("_is_st"),
+    ])
+    frame = frame.with_columns(
+        polars_price_limit_pct(pl.col("symbol"), pl.col("date"), pl.col("_is_st")).alias("_limit_pct")
+    )
+    up_price = polars_limit_price(pl.col("_prev"), pl.col("_limit_pct"), up=True)
+    down_price = polars_limit_price(pl.col("_prev"), pl.col("_limit_pct"), up=False)
+    is_up = pl.col("close") >= up_price - 0.005
+    is_down = pl.col("close") <= down_price + 0.005
+    prev_up = pl.col("_previous_limit_ups").fill_null(0) if "_previous_limit_ups" in frame.columns else pl.lit(0)
+    prev_down = pl.col("_previous_limit_downs").fill_null(0) if "_previous_limit_downs" in frame.columns else pl.lit(0)
+    return frame.with_columns([
+        pl.coalesce("quote_change_pct", pl.col("close") / pl.col("_prev") - 1).alias("change_pct"),
+        is_up.alias("signal_limit_up"),
+        is_down.alias("signal_limit_down"),
+        ((~is_up) & (pl.col("high") >= up_price - 0.005)).alias("signal_broken_limit_up"),
+        ((~is_down) & (pl.col("low") <= down_price + 0.005) & (pl.col("close") > pl.col("open"))).alias("signal_limit_down_recovery"),
+        pl.when(is_up).then(prev_up + 1).otherwise(0).cast(pl.UInt32).alias("consecutive_limit_ups"),
+        pl.when(is_down).then(prev_down + 1).otherwise(0).cast(pl.UInt32).alias("consecutive_limit_downs"),
+    ]).drop([
+        "quote_prev_close", "quote_change_pct", "_previous_close", "_previous_limit_ups",
+        "_previous_limit_downs", "_prev", "_is_st", "_limit_pct",
+    ], strict=False)
 
 
 class CustomRequest(BaseModel):
@@ -711,6 +769,7 @@ def limit_ladder(
 
     repo = request.app.state.repo
     svc = ScreenerService(repo)
+    explicit_as_of = as_of is not None
     as_of = as_of or svc.latest_date()
     if not as_of:
         raise HTTPException(status_code=400, detail="无可用数据日期")
@@ -718,6 +777,29 @@ def limit_ladder(
     df = svc._load_enriched_for_date(as_of)
     if df.is_empty():
         return {"as_of": str(as_of), "tiers": [], "counts": {"up": 0, "down": 0}}
+
+    is_realtime = False
+    if not explicit_as_of:
+        try:
+            from app.data_providers import custom as custom_sources
+            from app.services import preferences
+            from app.services.market_overview_builder import _realtime_trade_date
+
+            provider_name = preferences.get_realtime_data_provider()
+            if (
+                provider_name != "tickflow"
+                and custom_sources.provider_has_dataset(provider_name, "realtime")
+            ):
+                realtime_rows = custom_sources.get_provider(provider_name).get_realtime() or []
+                realtime_date = _realtime_trade_date(realtime_rows, "cn")
+                if realtime_date and realtime_date >= as_of:
+                    live_df = _overlay_live_limit_signals(df, realtime_rows, realtime_date)
+                    if not live_df.is_empty():
+                        df = live_df
+                        as_of = realtime_date
+                        is_realtime = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("limit ladder realtime overlay unavailable: %s", type(exc).__name__)
 
     # 双方向涨跌停计数(不论当前 direction, 前端始终同时显示)
     count_up_raw = int(df.filter(pl.col("signal_limit_up").fill_null(False)).height) if "signal_limit_up" in df.columns else 0
@@ -729,6 +811,8 @@ def limit_ladder(
     fake_down = 0
     sealed_up_ready = False
     sealed_down_ready = False
+    up_map = {}
+    down_map = {}
     if depth_svc_global:
         up_map = depth_svc_global.get_sealed_map(as_of, is_down=False)
         down_map = depth_svc_global.get_sealed_map(as_of, is_down=True)
@@ -912,6 +996,7 @@ def limit_ladder(
 
     return {
         "as_of": str(as_of),
+        "is_realtime": is_realtime,
         "tiers": tier_list,
         "counts": {"up": count_up, "down": count_down},
         "counts_raw": {"up": count_up_raw, "down": count_down_raw},

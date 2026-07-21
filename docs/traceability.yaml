@@ -67,3 +67,14 @@ requirements:
     acceptance:
       - {path: docs/acceptance/market-overview-live-date.md, type: semantic-acceptance}
       - {path: docs/reviews/market-overview-live-date.md, type: independent-review}
+  - id: REQ-LIMIT-LADDER-REALTIME-001
+    specification: SPEC-LIMIT-LADDER-REALTIME-001
+    implementation:
+      - backend/app/api/screener.py
+      - frontend/src/pages/LimitUpLadder.tsx
+    tests:
+      - {path: backend/tests/test_limit_ladder_realtime.py, type: executable-test}
+      - {path: frontend/src/pages/limit-ladder-realtime.test.ts, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/limit-ladder-realtime.md, type: semantic-acceptance}
+      - {path: docs/reviews/limit-ladder-realtime.md, type: independent-review}

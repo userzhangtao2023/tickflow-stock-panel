@@ -29,5 +29,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-MARKET-OVERVIEW-LIVE-DATE-001
+  - id: SPEC-LIMIT-LADDER-REALTIME-001
+    path: docs/specs/limit-ladder-realtime.md
+    status: authoritative
+    requirements:
+      - REQ-LIMIT-LADDER-REALTIME-001
 conflicts: []
 exceptions: []
