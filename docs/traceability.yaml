@@ -9,6 +9,7 @@ requirements:
     tests:
       - {path: backend/tests/test_dow_strategy_registry.py, type: executable-test}
       - {path: frontend/src/components/screener/DowStrategyCard.test.tsx, type: executable-test}
+      - {path: frontend/src/pages/screener-dow-routing.test.ts, type: executable-test}
     acceptance:
       - {path: docs/acceptance/dow-trend-strategy-ui.md, type: semantic-acceptance}
       - {path: docs/reviews/dow-trend-strategy-ui.md, type: independent-review}

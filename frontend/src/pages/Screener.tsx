@@ -196,6 +196,10 @@ export function Screener() {
 
   const availableStrategyIds = useMemo(() => new Set((strategies.data?.presets ?? []).map(s => s.id)), [strategies.data])
   const visiblePool = useMemo(() => pool.filter(id => availableStrategyIds.has(id)), [pool, availableStrategyIds])
+  const localEnginePool = useMemo(
+    () => visiblePool.filter(id => id !== DOW_TREND_STRATEGY_ID),
+    [visiblePool],
+  )
 
   useEffect(() => {
     if (dowPoolRegistered.current || !availableStrategyIds.has(DOW_TREND_STRATEGY_ID)) return
@@ -228,7 +232,7 @@ export function Screener() {
     mutationFn: ({ date, strategyIds }: { date?: string; strategyIds?: string[] } = {}) =>
       api.screenerRunAll(
         date,
-        strategyIds ?? visiblePool,
+        strategyIds ?? localEnginePool,
         assetType,
         marketFilter,
       ),
@@ -244,10 +248,10 @@ export function Screener() {
   })
 
   const missingStrategyIds = useMemo(
-    () => visiblePool.filter(id => summaryQuery.data?.results[id]?.as_of !== asOf),
-    [visiblePool, summaryQuery.data, asOf],
+    () => localEnginePool.filter(id => summaryQuery.data?.results[id]?.as_of !== asOf),
+    [localEnginePool, summaryQuery.data, asOf],
   )
-  const cacheCoversPool = visiblePool.length > 0 && missingStrategyIds.length === 0
+  const cacheCoversPool = localEnginePool.length > 0 && missingStrategyIds.length === 0
 
   // 摘要只同步当前日期的卡片数量，避免旧日期缓存短暂显示成当前结果。
   useEffect(() => {
