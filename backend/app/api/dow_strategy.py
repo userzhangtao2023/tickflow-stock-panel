@@ -35,6 +35,20 @@ def pool(
     return _payload(response)
 
 
+@router.post("/runs")
+def start_run(payload: dict):
+    return _payload(httpx.post(
+        f"{_endpoint()}/api/dow-strategy/runs", json=payload, timeout=30.0
+    ))
+
+
+@router.get("/runs/{run_id}")
+def run_status(run_id: str):
+    return _payload(httpx.get(
+        f"{_endpoint()}/api/dow-strategy/runs/{run_id}", timeout=30.0
+    ))
+
+
 @router.get("/{symbol}")
 def detail(symbol: str):
     return _payload(httpx.get(
