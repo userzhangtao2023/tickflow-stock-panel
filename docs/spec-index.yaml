@@ -49,5 +49,10 @@ specifications:
     status: authoritative
     requirements:
       - REQ-STOCK-ANALYSIS-REPORT-COPY-001
+  - id: SPEC-DOW-TREND-STRATEGY-UI-001
+    path: docs/specs/dow-trend-strategy-ui.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-TREND-STRATEGY-UI-001
 conflicts: []
 exceptions: []

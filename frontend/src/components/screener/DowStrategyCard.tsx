@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronUp, Play, TestTube2 } from 'lucide-react'
 type Fetcher = (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<any> }>
 type Stock = { symbol: string; name: string; market?: string; strategyScore: number; triggerTimeframes: string[]; dataFreshness?: string }
 type Detail = { timeframeStates: Record<string, { available: boolean; action?: string; phase?: string; reason?: string }>; dataFreshness?: string }
+export const DOW_TREND_STRATEGY_ID = 'dow_trend'
 const periods = [['15m', '15分钟'], ['30m', '30分钟'], ['day', '日线']] as const
 
 export function DowStrategyCard({ market, fetcher = fetch }: { market: string; fetcher?: Fetcher }) {

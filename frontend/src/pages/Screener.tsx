@@ -16,7 +16,7 @@ import { DatePicker } from '@/components/DatePicker'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { useStrategyPool } from '@/lib/useStrategyPool'
 import { StrategyCard, CardSize, loadCardSize, cardWrapCls } from '@/components/screener/StrategyCard'
-import { DowStrategyCard } from '@/components/screener/DowStrategyCard'
+import { DowStrategyCard, DOW_TREND_STRATEGY_ID } from '@/components/screener/DowStrategyCard'
 import { ScreenerTable } from '@/components/screener/ScreenerTable'
 import { ScreenerFilter as ScreenerFilterType, defaultFilter, filterActive, countActiveFilters, applyFilter, FilterPanel } from '@/components/screener/ScreenerFilter'
 import { StrategySettingsDialog } from '@/components/screener/StrategySettingsDialog'
@@ -53,6 +53,7 @@ export function Screener() {
   const [builderMode, setBuilderMode] = useState<'create' | 'modify'>('create')
   const [showStore, setShowStore] = useState(false)
   const { pool, addToPool, removeFromPool, reorderPool, prune } = useStrategyPool()
+  const dowPoolRegistered = useRef(false)
   const [cardSize, setCardSize] = useState<CardSize>(loadCardSize)
   // 日k蜡烛图显示开关（仅当 candle 列可见时才有意义；持久化）
   const [dailyKChartVisible, setDailyKChartVisible] = useState<boolean>(() => storage.screenerCandle.get(true))
@@ -195,6 +196,12 @@ export function Screener() {
 
   const availableStrategyIds = useMemo(() => new Set((strategies.data?.presets ?? []).map(s => s.id)), [strategies.data])
   const visiblePool = useMemo(() => pool.filter(id => availableStrategyIds.has(id)), [pool, availableStrategyIds])
+
+  useEffect(() => {
+    if (dowPoolRegistered.current || !availableStrategyIds.has(DOW_TREND_STRATEGY_ID)) return
+    dowPoolRegistered.current = true
+    if (!pool.includes(DOW_TREND_STRATEGY_ID)) addToPool(DOW_TREND_STRATEGY_ID)
+  }, [availableStrategyIds, pool, addToPool])
 
   // 策略列表加载后,自动清除池中失效的自定义策略(如本地开发残留的、
   // 当前后端已不存在的策略 ID),避免"策略池"对话框持续显示失效项。
@@ -681,7 +688,6 @@ export function Screener() {
       />
 
       <div className="space-y-3 px-2 py-3 sm:px-5 lg:px-8 lg:py-4">
-        <DowStrategyCard market={marketFilter} />
         {/* 策略卡片 */}
         {cardSize !== 'hidden' && (
         <section>
@@ -695,6 +701,22 @@ export function Screener() {
             {visiblePool.map(id => {
               const s = strategyMap.get(id)
               if (!s) return null
+              if (id === DOW_TREND_STRATEGY_ID) {
+                return (
+                  <StrategyCard
+                    key={s.id}
+                    name={s.name}
+                    description={s.description}
+                    source={s.source}
+                    strategyRole={s.strategy_role}
+                    active={activeStrategy === s.id}
+                    loading={false}
+                    cardSize={cardSize}
+                    onRun={() => { handleStrategySwitch(s.id); setActiveStrategy(s.id); setShowAll(false); setResult(null) }}
+                    disabled={false}
+                  />
+                )
+              }
               return (
                 <StrategyCard
                   key={s.id}
@@ -718,6 +740,8 @@ export function Screener() {
           </div>
         </section>
         )}
+
+        {activeStrategy === DOW_TREND_STRATEGY_ID && <DowStrategyCard market={marketFilter} />}
 
         {/* 结果 */}
         <section>

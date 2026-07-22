@@ -88,7 +88,7 @@ interface StrategyCardProps {
   cardSize: CardSize
   onRun: () => void
   disabled: boolean
-  onSettings: () => void
+  onSettings?: () => void
   /** 是否已加入策略监控 */
   monitored?: boolean
   /** 切换策略监控 (点击 RadioTower 图标) */
@@ -154,10 +154,10 @@ export function StrategyCard({
             )}
             {loading && <div className="mt-1 h-4 w-10 rounded bg-elevated animate-pulse" />}
           </button>
-          <button onClick={(e) => { e.stopPropagation(); onSettings() }}
+          {onSettings && <button onClick={(e) => { e.stopPropagation(); onSettings() }}
             className="absolute top-1.5 right-1.5 p-0.5 rounded hover:bg-elevated transition-colors cursor-pointer" title="策略设置">
             <Settings2 className="h-3 w-3 text-muted hover:text-accent transition-colors" />
-          </button>
+          </button>}
           {onToggleMonitor && (
             <button onClick={(e) => { e.stopPropagation(); onToggleMonitor() }}
               className="absolute top-1.5 right-7 p-0.5 rounded hover:bg-elevated transition-colors cursor-pointer" title={monitored ? '取消策略监控' : '开启策略监控'}>
@@ -188,10 +188,10 @@ export function StrategyCard({
               )}
             </div>
           </button>
-          <button onClick={(e) => { e.stopPropagation(); onSettings() }}
+          {onSettings && <button onClick={(e) => { e.stopPropagation(); onSettings() }}
             className="absolute top-1.5 right-1.5 p-0.5 rounded hover:bg-elevated transition-colors cursor-pointer" title="策略设置">
             <Settings2 className="h-3 w-3 text-muted hover:text-accent transition-colors" />
-          </button>
+          </button>}
           {onToggleMonitor && (
             <button onClick={(e) => { e.stopPropagation(); onToggleMonitor() }}
               className="absolute top-1.5 right-7 p-0.5 rounded hover:bg-elevated transition-colors cursor-pointer" title={monitored ? '取消策略监控' : '开启策略监控'}>
@@ -223,10 +223,10 @@ export function StrategyCard({
               {monitored && <span className="absolute inset-0 rounded animate-ping bg-accent/20" />}
             </button>
           )}
-          <button onClick={(e) => { e.stopPropagation(); onSettings() }}
+          {onSettings && <button onClick={(e) => { e.stopPropagation(); onSettings() }}
             className="p-0.5 rounded hover:bg-elevated transition-colors cursor-pointer" title="策略设置">
             <Settings2 className="h-3 w-3 text-muted hover:text-accent transition-colors" />
-          </button>
+          </button>}
         </>
       )}
     </motion.div>

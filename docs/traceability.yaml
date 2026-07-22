@@ -1,5 +1,17 @@
 version: 1
 requirements:
+  - id: REQ-DOW-TREND-STRATEGY-UI-001
+    specification: SPEC-DOW-TREND-STRATEGY-UI-001
+    implementation:
+      - backend/app/api/strategy.py
+      - frontend/src/pages/Screener.tsx
+      - frontend/src/components/screener/DowStrategyCard.tsx
+    tests:
+      - {path: backend/tests/test_dow_strategy_registry.py, type: executable-test}
+      - {path: frontend/src/components/screener/DowStrategyCard.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-trend-strategy-ui.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-trend-strategy-ui.md, type: independent-review}
   - id: REQ-GLOBAL-INDEX-API-001
     specification: SPEC-GLOBAL-INDEX-REALTIME-001
     implementation: backend/app/api/intraday.py
