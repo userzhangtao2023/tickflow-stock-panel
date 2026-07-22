@@ -2,12 +2,16 @@ import { useCallback, useEffect, useState } from 'react'
 import { Activity, ChevronDown, ChevronUp, Play, TestTube2 } from 'lucide-react'
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<any> }>
-type Stock = { symbol: string; name: string; market?: string; strategyScore: number; triggerTimeframes: string[]; dataFreshness?: string }
-type Detail = { timeframeStates: Record<string, { available: boolean; action?: string; phase?: string; reason?: string }>; dataFreshness?: string }
+type Stock = { symbol: string; name: string; market?: string; strategyScore: number; triggerTimeframes: string[]; formalTimeframes?: string[]; provisionalTimeframes?: string[]; dataFreshness?: string }
+type DetailState = { available: boolean; action?: string; phase?: string; bar_completion?: string; reason?: string; match_type?: 'FORMAL' | 'PROVISIONAL' | 'NONE'; matched_bar_time?: string; matched_bar_offset?: number; matched_snapshot?: { phase?: string } | null }
+type Detail = { timeframeStates: Record<string, DetailState>; formalTimeframes?: string[]; provisionalTimeframes?: string[]; dataFreshness?: string }
 type ScanJob = { runId: string; status: 'queued' | 'running' | 'complete' | 'failed'; completed?: number; total?: number; selected?: number; failed?: number; currentSymbol?: string; error?: string }
 export const DOW_TREND_STRATEGY_ID = 'dow_trend'
-const periods = [['15m', '15分钟'], ['30m', '30分钟'], ['day', '日线']] as const
+const periods = [['5m', '5分钟'], ['15m', '15分钟'], ['30m', '30分钟'], ['60m', '60分钟'], ['day', '日线']] as const
 const marketNames: Record<string, string> = { cn: 'A股', hk: '港股', us: '美股', all: '全部市场' }
+const periodLabel = (period: string) => period === 'day' ? '日线' : period
+const matchLabel = (type?: string) => type === 'FORMAL' ? '正式买点' : type === 'PROVISIONAL' ? '盘中候选' : ''
+const offsetLabel = (offset?: number) => offset === 0 ? '当前' : typeof offset === 'number' ? `前 ${offset} 根` : ''
 
 export function DowStrategyCard({ market, fetcher = fetch }: { market: string; fetcher?: Fetcher }) {
   const [open, setOpen] = useState(true)
@@ -69,15 +73,15 @@ export function DowStrategyCard({ market, fetcher = fetch }: { market: string; f
 
   return <section className="rounded-card border border-cyan-400/25 bg-surface overflow-hidden">
     <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-      <button type="button" className="flex items-center gap-2 text-left" onClick={() => setOpen(value => !value)}><Activity className="h-4 w-4 text-cyan-400" /><span><b className="block text-sm text-foreground">道氏趋势 · 多周期</b><small className="text-muted">15分钟、30分钟、日线任一完成周期出现 OPEN_LONG 即入选</small></span>{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+      <button type="button" className="flex items-center gap-2 text-left" onClick={() => setOpen(value => !value)}><Activity className="h-4 w-4 text-cyan-400" /><span><b className="block text-sm text-foreground">道氏趋势 · 多周期</b><small className="text-muted">5/15/30/60分钟及日线最近4根K线买点</small></span>{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
       <button type="button" onClick={() => void run()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-btn bg-cyan-500/15 border border-cyan-400/30 px-3 py-2 text-xs text-cyan-300"><Play className="h-3.5 w-3.5" />{loading ? '刷新中…' : '刷新选股结果'}</button>
     </div>
     {open && <div className="border-t border-border p-4 space-y-3">
       {error && <p className="text-xs text-danger">{error}</p>}
       {loading && job && <p className="text-xs text-cyan-300">正在扫描{marketNames[market] ?? market}：{job.completed ?? 0}/{job.total ?? 0}{job.currentSymbol ? ` · ${job.currentSymbol}` : ''}</p>}
       {loaded && <p className="text-xs text-cyan-300">{stocks.length > 0 ? `${marketNames[market] ?? market}选股完成，共 ${stocks.length} 只` : `${marketNames[market] ?? market}选股完成，当前暂无符合条件的股票`}</p>}
-      <div className="flex gap-2 overflow-x-auto pb-1">{stocks.map(stock => <button type="button" key={stock.symbol} onClick={() => void inspect(stock.symbol)} className={`min-w-[150px] rounded-btn border p-3 text-left ${selected === stock.symbol ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-base'}`}><b className="block text-xs">{stock.symbol} · {stock.name}</b><span className="text-[11px] text-cyan-300">{stock.triggerTimeframes?.map(p => p === 'day' ? '日线' : p).join(' + ')}</span><small className="block text-muted">评分 {stock.strategyScore?.toFixed?.(1) ?? '-'}</small></button>)}</div>
-      {detail && <><div className="grid grid-cols-1 sm:grid-cols-3 gap-2">{periods.map(([key, label]) => { const state = detail.timeframeStates?.[key]; return <div key={key} className="rounded-btn border border-border bg-base p-3"><b className="text-xs">{label}</b><strong className="block mt-1 text-cyan-300 text-xs">{state?.available ? state.action ?? 'WATCH' : '不可用'}</strong><small className="text-muted">{state?.available ? state.phase ?? '-' : state?.reason ?? '-'}</small></div> })}</div><button type="button" onClick={() => void backtest()} className="inline-flex items-center gap-1.5 rounded-btn border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-300"><TestTube2 className="h-3.5 w-3.5" />回测当前股票</button></>}
+      <div className="flex gap-2 overflow-x-auto pb-1">{stocks.map(stock => <button type="button" key={stock.symbol} onClick={() => void inspect(stock.symbol)} className={`min-w-[150px] rounded-btn border p-3 text-left ${selected === stock.symbol ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-base'}`}><b className="block text-xs">{stock.symbol} · {stock.name}</b><span className="text-[11px] text-cyan-300">{stock.triggerTimeframes?.map(periodLabel).join(' + ')}</span><small className="block text-muted">评分 {stock.strategyScore?.toFixed?.(1) ?? '-'}</small></button>)}</div>
+      {detail && <><div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">{periods.map(([key, label]) => { const state = detail.timeframeStates?.[key]; const matched = matchLabel(state?.match_type); const offset = offsetLabel(state?.matched_bar_offset); return <div key={key} className="rounded-btn border border-border bg-base p-3"><b className="text-xs">{label}</b><strong className="block mt-1 text-cyan-300 text-xs">{state?.available ? matched || state.action || 'WATCH' : '不可用'}</strong>{state?.available && matched && <small className="block text-cyan-300">{offset}{state.matched_bar_time ? ` · ${state.matched_bar_time}` : ''}</small>}<small className="block text-muted">{state?.available ? `${state.matched_snapshot?.phase ?? state.phase ?? '-'} · 当前 ${state.action ?? 'WATCH'} ${state.bar_completion ?? ''}` : state?.reason ?? '-'}</small></div> })}</div><button type="button" onClick={() => void backtest()} className="inline-flex items-center gap-1.5 rounded-btn border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-300"><TestTube2 className="h-3.5 w-3.5" />回测当前股票</button></>}
       {metrics && <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs"><span>累计收益<b className="block text-foreground">{(metrics.cumulativeReturn * 100).toFixed(2)}%</b></span><span>最大回撤<b className="block text-foreground">{(metrics.maximumDrawdown * 100).toFixed(2)}%</b></span><span>胜率<b className="block text-foreground">{(metrics.winRate * 100).toFixed(2)}%</b></span><span>交易次数<b className="block text-foreground">{metrics.tradeCount}</b></span></div>}
     </div>}
   </section>
