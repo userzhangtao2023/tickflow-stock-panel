@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Activity, ChevronDown, ChevronUp, Play, TestTube2 } from 'lucide-react'
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<any> }>
@@ -18,18 +18,19 @@ export function DowStrategyCard({ market, fetcher = fetch }: { market: string; f
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => {
-    setStocks([]); setSelected(''); setDetail(null); setMetrics(null); setError(''); setLoaded(false)
-  }, [market])
-
-  const run = async () => {
+  const run = useCallback(async () => {
     setLoading(true); setError(''); setLoaded(false)
     try {
       const response = await fetcher(`/api/dow-strategy/pool?market=${market}&limit=80`)
       if (!response.ok) throw new Error('道氏策略服务暂不可用')
       const payload = await response.json(); setStocks(payload.stocks ?? []); setLoaded(true)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '选股失败') } finally { setLoading(false) }
-  }
+  }, [fetcher, market])
+
+  useEffect(() => {
+    setStocks([]); setSelected(''); setDetail(null); setMetrics(null); setError(''); setLoaded(false)
+    void run()
+  }, [market, run])
   const inspect = async (symbol: string) => {
     setSelected(symbol); setMetrics(null)
     const response = await fetcher(`/api/dow-strategy/${encodeURIComponent(symbol)}`)
