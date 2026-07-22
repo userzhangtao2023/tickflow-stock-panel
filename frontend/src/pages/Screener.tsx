@@ -16,6 +16,7 @@ import { DatePicker } from '@/components/DatePicker'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { useStrategyPool } from '@/lib/useStrategyPool'
 import { StrategyCard, CardSize, loadCardSize, cardWrapCls } from '@/components/screener/StrategyCard'
+import { DowStrategyCard } from '@/components/screener/DowStrategyCard'
 import { ScreenerTable } from '@/components/screener/ScreenerTable'
 import { ScreenerFilter as ScreenerFilterType, defaultFilter, filterActive, countActiveFilters, applyFilter, FilterPanel } from '@/components/screener/ScreenerFilter'
 import { StrategySettingsDialog } from '@/components/screener/StrategySettingsDialog'
@@ -680,6 +681,7 @@ export function Screener() {
       />
 
       <div className="space-y-3 px-2 py-3 sm:px-5 lg:px-8 lg:py-4">
+        <DowStrategyCard market={marketFilter} />
         {/* 策略卡片 */}
         {cardSize !== 'hidden' && (
         <section>
