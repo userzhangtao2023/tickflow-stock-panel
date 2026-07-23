@@ -6,7 +6,9 @@
 ## 生产实况
 
 - TickFlow 提交：`21f1493`、`072afde`；Longbridge 提交：`1430d0e`。
-- 生产镜像：`tickflow-stock-panel-app:dow-monitor-history-alias-20260723-2323`。
+- 生产镜像：
+  `tickflow-stock-panel-app:dow-monitor-badges-sessions-850a313-20260723-2350`；
+  上一可用镜像 `dow-monitor-history-alias-20260723-2323` 保留用于回滚。
 - `/health` 返回 `status=ok`；`/api/dow-monitor/status` 返回
   `running=true`、`last_error=null`、`errors={}`。
 - WebStock strict 数据为 `LIVE`，缺口列表为空；01347 的严格分钟序列为
@@ -26,6 +28,26 @@
 
 当前生产实况是 `WATCH/观察`，因此当前五个周期没有控制线，也没有伪造新的
 交易通知。
+
+## 生产页面人工验收
+
+在已登录的生产页面 `http://192.168.10.28:3018/dow-monitor?market=hk`
+直接检查最终镜像
+`tickflow-stock-panel-app:dow-monitor-badges-sessions-850a313-20260723-2350`：
+
+- 页面复用现有 TickFlow 侧栏、主题和认证框架，侧栏入口为“趋势监控”；
+- 页面同时显示“全部 / A股 / 港股 / 美股”市场筛选，以及“全部 / 有信号 /
+  仅买点 / 仅卖点”状态筛选；
+- 页面只显示已启用的 `01347.HK` 卡片，卡片开关开启，五个周期按钮和最新通知区
+  同屏可见；
+- 后端五个当前状态均为 `WATCH` 时，5、15、30、60 分钟和日 K 五个周期徽标均为
+  黄色；历史通知仍保留在卡片文字区和通知区，但不会再把当前周期徽标错误染成
+  红色或绿色；
+- 点击卡片可以打开“01347.HK 完整K线”弹窗，弹窗显示实时状态、五周期切换、
+  成交量、MACD、RSI、KDJ、BOLL、量能对比、OHLC 和均线信息。
+
+该检查是生产 UI 的实际 DOM/交互观察；它不替代下层 WebStock 完整性、Longbridge
+引擎语义和通知状态机验收。
 
 ## 真实引擎事件样本
 
