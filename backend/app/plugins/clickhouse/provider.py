@@ -262,17 +262,15 @@ class ClickHouseProvider:
                     frames.append(fallback_frame)
         return pl.concat(frames, how="diagonal_relaxed") if frames else pl.DataFrame()
 
-    def get_minute(
+    def _query_minute_rows(
         self,
         symbols: list[str],
         start_time: datetime | None,
         end_time: datetime | None,
-        asset_type: str = "stock",
-        on_chunk_done=None,
-        freq: str = "1m",
-    ) -> pl.DataFrame:
+        freq: str,
+    ) -> list[dict]:
         if not symbols:
-            return pl.DataFrame()
+            return []
         # trade_date_local in the collector is the Asia/Shanghai calendar date.
         # US sessions cross that boundary, so query a guard day on both sides and
         # apply the requested date after converting each bar to its market time.
@@ -298,7 +296,26 @@ class ClickHouseProvider:
             )
             ORDER BY symbol, bar_time_utc
         """
-        rows = self._query(sql)
+        return self._query(sql)
+
+    @staticmethod
+    def _minute_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+        frame = pl.DataFrame(rows) if rows else pl.DataFrame()
+        if frame.is_empty():
+            return frame
+        for column in ("open", "high", "low", "close", "volume", "amount"):
+            if column in frame.columns:
+                frame = frame.with_columns(pl.col(column).cast(pl.Float64, strict=False))
+        selected_columns = [column for column in _MINUTE_COLUMNS if column in frame.columns]
+        return frame.select(selected_columns).sort(["symbol", "datetime"])
+
+    def _normalize_minute_query_rows(
+        self,
+        rows: list[dict],
+        symbols: list[str],
+        start_time: datetime | None,
+        end_time: datetime | None,
+    ) -> pl.DataFrame:
         mapped_by_key: dict[tuple[str, datetime], dict[str, Any]] = {}
         for row in rows:
             symbol = str(row.get("symbol") or "").upper()
@@ -318,6 +335,38 @@ class ClickHouseProvider:
             previous_priority = int(previous.get("source_priority") or 0) if previous else -1
             if current_priority >= previous_priority:
                 mapped_by_key[key] = item
+        return self._minute_frame(list(mapped_by_key.values()))
+
+    def get_minute_strict(
+        self,
+        symbols: list[str],
+        start_time: datetime | None,
+        end_time: datetime | None,
+        asset_type: str = "stock",
+        freq: str = "1m",
+    ) -> pl.DataFrame:
+        rows = self._query_minute_rows(symbols, start_time, end_time, freq)
+        frame = self._normalize_minute_query_rows(rows, symbols, start_time, end_time)
+        if frame.is_empty():
+            return frame.with_columns(pl.Series("source", [], dtype=pl.String))
+        return frame.with_columns(pl.lit("webstock").alias("source"))
+
+    def get_minute(
+        self,
+        symbols: list[str],
+        start_time: datetime | None,
+        end_time: datetime | None,
+        asset_type: str = "stock",
+        on_chunk_done=None,
+        freq: str = "1m",
+    ) -> pl.DataFrame:
+        if not symbols:
+            return pl.DataFrame()
+        rows = self._query_minute_rows(symbols, start_time, end_time, freq)
+        frame = self._normalize_minute_query_rows(rows, symbols, start_time, end_time)
+        mapped_by_key = {
+            (str(row["symbol"]), row["datetime"]): row for row in frame.to_dicts()
+        }
 
         covered = {symbol for symbol, _ in mapped_by_key}
         missing_symbols = [
@@ -347,23 +396,12 @@ class ClickHouseProvider:
                 }
                 mapped_by_key[(symbol, local_time)] = item
 
-        mapped = list(mapped_by_key.values())
-        frame = pl.DataFrame(mapped) if mapped else pl.DataFrame()
-        if not frame.is_empty():
-            for column in ("open", "high", "low", "close", "volume", "amount"):
-                if column in frame.columns:
-                    frame = frame.with_columns(pl.col(column).cast(pl.Float64, strict=False))
-            selected_columns = [column for column in _MINUTE_COLUMNS if column in frame.columns]
-            frame = frame.select(selected_columns).sort(["symbol", "datetime"])
+        frame = self._minute_frame(list(mapped_by_key.values()))
         if on_chunk_done:
             on_chunk_done(1, 1)
         return frame
 
-    def get_realtime(
-        self,
-        universes: list[str] | None = None,
-        symbols: list[str] | None = None,
-    ) -> list[dict]:
+    def _query_realtime_rows(self, symbols: list[str] | None) -> list[dict]:
         filters = [
             "snapshot_minute >= toStartOfDay(now('Asia/Shanghai'))",
             "snapshot_minute < toStartOfDay(now('Asia/Shanghai')) + INTERVAL 1 DAY",
@@ -379,8 +417,12 @@ class ClickHouseProvider:
             ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
             LIMIT 1 BY symbol
         """
+        return self._query(sql)
+
+    @staticmethod
+    def _normalize_realtime_query_rows(rows: list[dict]) -> list[dict]:
         records: list[dict] = []
-        for row in self._query(sql):
+        for row in rows:
             symbol = str(row.get("symbol") or "").upper()
             if not symbol:
                 continue
@@ -403,6 +445,18 @@ class ClickHouseProvider:
                 "timestamp": timestamp,
             })
         return records
+
+    def get_realtime_strict(self, symbols: list[str]) -> list[dict]:
+        if not symbols:
+            return []
+        return self._normalize_realtime_query_rows(self._query_realtime_rows(symbols))
+
+    def get_realtime(
+        self,
+        universes: list[str] | None = None,
+        symbols: list[str] | None = None,
+    ) -> list[dict]:
+        return self._normalize_realtime_query_rows(self._query_realtime_rows(symbols))
 
     def get_instruments(self, asset_type: str = "stock") -> list[dict]:
         if asset_type != "stock":

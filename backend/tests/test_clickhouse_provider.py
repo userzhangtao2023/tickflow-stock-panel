@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 from app.plugins.clickhouse import provider as provider_module
 from app.plugins.clickhouse.provider import ClickHouseProvider
@@ -283,6 +284,113 @@ def test_minute_bars_do_not_fall_back_for_covered_symbol() -> None:
 
     assert frame.height == 1
     assert requested == []
+
+
+def test_minute_fallback_keeps_one_row_per_symbol_and_timestamp() -> None:
+    provider = ClickHouseProvider(
+        query_fn=QueryRecorder([]),
+        minute_fallback_fn=lambda _symbol: [
+            {
+                "time": "2026-07-17T09:30:00",
+                "close": 12,
+            },
+            {
+                "time": "2026-07-17T09:30:00",
+                "close": 13,
+            },
+        ],
+    )
+
+    frame = provider.get_minute(
+        ["000001.SZ"],
+        datetime(2026, 7, 17),
+        datetime(2026, 7, 17, 23, 59),
+    )
+
+    assert frame.select("symbol", "datetime", "close").to_dicts() == [{
+        "symbol": "000001.SZ",
+        "datetime": datetime(2026, 7, 17, 9, 30),
+        "close": 13.0,
+    }]
+
+
+def test_strict_minute_never_uses_longbridge_fallback() -> None:
+    fallback = Mock(side_effect=AssertionError("fallback forbidden"))
+    provider = ClickHouseProvider(query_fn=QueryRecorder([]), minute_fallback_fn=fallback)
+
+    frame = provider.get_minute_strict(
+        ["01347.HK"],
+        datetime(2026, 7, 23, 9, 30),
+        datetime(2026, 7, 23, 16, 0),
+    )
+
+    assert frame.is_empty()
+    assert frame.columns == ["source"]
+    fallback.assert_not_called()
+
+
+def test_strict_minute_marks_clickhouse_rows_as_webstock() -> None:
+    query = QueryRecorder([{
+        "symbol": "01347.HK",
+        "market": "hk",
+        "bar_time_utc": "2026-07-23 01:30:00",
+        "open": 140,
+        "high": 141,
+        "low": 139,
+        "close": 140.5,
+        "volume": 100,
+        "amount": 14050,
+        "source_priority": 2,
+    }])
+    provider = ClickHouseProvider(query_fn=query)
+
+    frame = provider.get_minute_strict(
+        ["01347.HK"],
+        datetime(2026, 7, 23, 9, 30),
+        datetime(2026, 7, 23, 16, 0),
+    )
+
+    assert frame.select("symbol", "datetime", "source").to_dicts() == [{
+        "symbol": "01347.HK",
+        "datetime": datetime(2026, 7, 23, 9, 30),
+        "source": "webstock",
+    }]
+
+
+def test_strict_realtime_uses_only_clickhouse_query(monkeypatch) -> None:
+    query = QueryRecorder([{
+        "symbol": "01347.HK",
+        "market": "hk",
+        "snapshot_minute": "2026-07-23 10:01:00",
+        "last_done": 140.5,
+        "prev_close": 139,
+        "open": 140,
+        "high": 141,
+        "low": 139,
+        "change_value": 1.5,
+        "change_percentage": 1.0791,
+        "volume": 100,
+        "turnover": 14050,
+    }])
+    monkeypatch.setattr(
+        provider_module.httpx,
+        "get",
+        Mock(side_effect=AssertionError("Longbridge HTTP forbidden")),
+    )
+    provider = ClickHouseProvider(query_fn=query)
+
+    rows = provider.get_realtime_strict(["01347.HK"])
+
+    assert [row["symbol"] for row in rows] == ["01347.HK"]
+    assert "AND symbol IN ('01347.HK')" in query.queries[-1]
+
+
+def test_strict_realtime_empty_monitor_list_does_not_query_all_symbols() -> None:
+    query = QueryRecorder([])
+    provider = ClickHouseProvider(query_fn=query)
+
+    assert provider.get_realtime_strict([]) == []
+    assert query.queries == []
 
 
 def test_instruments_cover_all_three_markets() -> None:
