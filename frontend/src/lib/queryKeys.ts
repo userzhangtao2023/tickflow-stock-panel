@@ -5,6 +5,8 @@
  * - SSE invalidation 基于 SSE_INVALIDATE_PREFIXES 列表，新增 key 无需改 useQuoteStream。
  */
 
+import type { DowMonitorMarket, DowTimeframe } from '@/components/dow-monitor/types'
+
 // ===== Query Key 工厂 =====
 
 export const QK = {
@@ -81,6 +83,14 @@ export const QK = {
   monitorRules:         ['monitor-rules'] as const,
   monitorRuleOptions:   ['monitor-rule-options'] as const,
   alerts:               (source?: string) => ['alerts', source ?? ''] as const,
+
+  // Dow monitor
+  dowMonitorOverview: (market: DowMonitorMarket) =>
+                           ['dow-monitor', 'overview', market] as const,
+  dowMonitorNotifications: (market: DowMonitorMarket) =>
+                               ['dow-monitor', 'notifications', market] as const,
+  dowMonitorDetail: (symbol: string, timeframe: DowTimeframe) =>
+                       ['dow-monitor', 'detail', symbol, timeframe] as const,
 
   // AI 大盘复盘
   reviewReports:        ['review-reports'] as const,

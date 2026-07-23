@@ -4,6 +4,18 @@
 // Prod:同源(FastAPI 托管前端 dist)
 
 import { toast } from '@/components/Toast'
+import type {
+  DowMonitorDetailResponse,
+  DowMonitorMarket,
+  DowMonitorNotification,
+  DowMonitorNotificationsResponse,
+  DowMonitorOverviewResponse,
+  DowMonitorRemoveSymbolResponse,
+  DowMonitorStatusResponse,
+  DowMonitorSymbol,
+  DowMonitorSymbolsResponse,
+  DowTimeframe,
+} from '@/components/dow-monitor/types'
 import type { MarketCode } from '@/lib/market-display'
 
 const BASE = ''
@@ -1475,6 +1487,37 @@ export const api = {
         ? `/api/watchlist/enriched?ext_columns=${encodeURIComponent(extColumns)}`
         : '/api/watchlist/enriched',
     ),
+
+  // ===== Dow monitor =====
+  dowMonitorSymbols: () => request<DowMonitorSymbolsResponse>('/api/dow-monitor/symbols'),
+  addDowMonitorSymbol: (symbol: string, enabled = true) =>
+    request<DowMonitorSymbol>('/api/dow-monitor/symbols', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, enabled }),
+    }),
+  removeDowMonitorSymbol: (symbol: string) =>
+    request<DowMonitorRemoveSymbolResponse>(`/api/dow-monitor/symbols/${encodeURIComponent(symbol)}`, {
+      method: 'DELETE',
+    }),
+  setDowMonitorEnabled: (symbol: string, enabled: boolean) =>
+    request<DowMonitorSymbol>(`/api/dow-monitor/symbols/${encodeURIComponent(symbol)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+  dowMonitorOverview: (market: DowMonitorMarket) =>
+    request<DowMonitorOverviewResponse>(`/api/dow-monitor/overview?market=${market}`),
+  dowMonitorNotifications: (market: DowMonitorMarket) =>
+    request<DowMonitorNotificationsResponse>(`/api/dow-monitor/notifications?market=${market}`),
+  markDowNotificationRead: (notificationId: string) =>
+    request<DowMonitorNotification>(
+      `/api/dow-monitor/notifications/${encodeURIComponent(notificationId)}/read`,
+      { method: 'PATCH' },
+    ),
+  dowMonitorDetail: (symbol: string, timeframe: DowTimeframe) =>
+    request<DowMonitorDetailResponse>(
+      `/api/dow-monitor/${encodeURIComponent(symbol)}?timeframe=${timeframe}`,
+    ),
+  dowMonitorStatus: () => request<DowMonitorStatusResponse>('/api/dow-monitor/status'),
 
   screenerStrategies: async (assetType: 'stock' | 'etf' = 'stock') => {
     const data = await request<{ strategies: StrategyDetail[]; load_errors?: StrategyLoadError[] }>(
