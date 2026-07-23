@@ -115,7 +115,7 @@ def test_external_forming_bar_uses_existing_engine_and_preserves_anchors(fixture
     assert result["snapshot"]["bar_completion"] == "FORMING"
     assert result["snapshot"]["phase"]
     assert all(len(line["anchorTimes"]) == 2 for line in result["lines"])
-    assert {line["role"] for line in result["lines"]} >= {"PRIMARY"}
+    assert {line["role"] for line in result["lines"]} >= {"MAIN"}
 
 
 def test_external_endpoint_does_not_call_sdk(monkeypatch, fixture_payload):
