@@ -169,6 +169,10 @@ def _engine_result(
     action_code: str,
     line_id: str | None,
     evaluated_at: datetime,
+    long_operation: str = "观察",
+    long_signal_stage: str = "NONE",
+    long_line_id: str | None = None,
+    long_completion: str | None = None,
 ) -> DowEngineResult:
     current = bars[-1]
     active = action_code != "WATCH" and line_id is not None
@@ -240,6 +244,42 @@ def _engine_result(
             ],
             "lines": [line] if line else [],
             "signals": [],
+            "longTerm": {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "bar_time": current["timestamp"],
+                "bar_completion": long_completion or completion,
+                "provisional": (long_completion or completion) == "FORMING",
+                "trend_direction": "DOWN",
+                "trend_name": "长期下降趋势",
+                "pattern_name": "长期下降趋势双突破",
+                "operation": long_operation,
+                "signal_stage": long_signal_stage,
+                "breakout_type": "DOUBLE_BREAKOUT",
+                "line_id": long_line_id,
+                "line_side": "RESISTANCE" if long_line_id else None,
+                "line_status": "BROKEN" if long_line_id else None,
+                "first_anchor_time": bars[0]["timestamp"] if long_line_id else None,
+                "first_anchor_price": bars[0]["high"] if long_line_id else None,
+                "second_anchor_time": (
+                    bars[max(0, len(bars) - 2)]["timestamp"] if long_line_id else None
+                ),
+                "second_anchor_price": (
+                    bars[max(0, len(bars) - 2)]["high"] if long_line_id else None
+                ),
+                "line_value": 101.0 if long_line_id else None,
+                "key_level_type": "PRIMARY_LL" if long_line_id else None,
+                "key_level_time": bars[0]["timestamp"] if long_line_id else None,
+                "key_level_price": bars[0]["low"] if long_line_id else None,
+                "first_break_time": current["timestamp"] if long_line_id else None,
+                "recent_low_scale": "PRIMARY",
+                "recent_low_label": "LL",
+                "recent_low_time": bars[0]["timestamp"],
+                "recent_low_price": bars[0]["low"],
+                "recent_low_confirmed_time": bars[0]["timestamp"],
+                "evidence_codes": ["LONG_LINE_BREAK", "KEY_LEVEL_BREAK"],
+                "failure_reason": None,
+            },
             "evaluatedAt": evaluated_at.isoformat(),
         }
     )
@@ -254,12 +294,20 @@ class FakeClient:
         fail_symbols: set[str] | None = None,
         fail_timeframes: set[str] | None = None,
         unexpected_timeframes: set[str] | None = None,
+        long_operation: str = "观察",
+        long_signal_stage: str = "NONE",
+        long_line_id: str | None = None,
+        long_completion: str | None = None,
     ) -> None:
         self.action_code = action_code
         self.line_id = line_id
         self.fail_symbols = fail_symbols or set()
         self.fail_timeframes = fail_timeframes or set()
         self.unexpected_timeframes = unexpected_timeframes or set()
+        self.long_operation = long_operation
+        self.long_signal_stage = long_signal_stage
+        self.long_line_id = long_line_id
+        self.long_completion = long_completion
         self.calls: list[tuple[str, str]] = []
         self.received: list[tuple[str, str, list[dict]]] = []
         self.completions: list[tuple[str, str, str]] = []
@@ -292,6 +340,10 @@ class FakeClient:
             action_code=self.action_code,
             line_id=self.line_id,
             evaluated_at=as_of,
+            long_operation=self.long_operation,
+            long_signal_stage=self.long_signal_stage,
+            long_line_id=self.long_line_id,
+            long_completion=self.long_completion,
         )
         return self.last_result
 
@@ -557,6 +609,154 @@ async def test_watch_is_not_a_trade_notification_and_close_is_risk_family(tmp_pa
     client.action_code = "CLOSE_LONG"
     await service.run_once()
     assert {item.side for item in store.list_notifications()} == {"RISK"}
+
+
+@pytest.mark.asyncio
+async def test_local_and_long_term_events_coexist_and_full_sidecar_is_persisted(
+    tmp_path,
+) -> None:
+    client = FakeClient(
+        action_code="OPEN_LONG",
+        line_id="LINE-1",
+        long_operation="买入触发",
+        long_signal_stage="TRIGGER",
+        long_line_id="LONG-RESISTANCE-7",
+        long_completion="FINAL",
+    )
+    service, store, _, _ = _service(tmp_path, client=client)
+
+    await service.run_once()
+
+    notices = [item for item in store.list_notifications() if item.timeframe == "30m"]
+    assert {item.event_key for item in notices} == {
+        "01347.HK|30m|OPEN_LONG|LINE-1|1",
+        "01347.HK|30m|LONG_TERM_BUY|LONG-RESISTANCE-7|1",
+    }
+    state = store.get_state("01347.HK", "30m")
+    assert state.snapshot["action_code"] == "OPEN_LONG"
+    assert state.chart["lines"][0]["id"] == "LINE-1"
+    assert state.chart["longTerm"]["line_id"] == "LONG-RESISTANCE-7"
+    assert state.chart["longTerm"]["first_anchor_time"] is not None
+    assert state.chart["longTerm"]["pattern_name"] == "长期下降趋势双突破"
+    assert state.chart["longTerm"]["operation"] == "买入触发"
+    assert state.chart["longTerm"]["signal_stage"] == "TRIGGER"
+    assert state.chart["longTerm"]["evidence_codes"] == [
+        "LONG_LINE_BREAK",
+        "KEY_LEVEL_BREAK",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forming_long_term_trigger_is_display_only(tmp_path) -> None:
+    client = FakeClient(
+        long_operation="买入触发",
+        long_signal_stage="TRIGGER",
+        long_line_id="LONG-RESISTANCE-7",
+        long_completion="FORMING",
+    )
+    service, store, _, _ = _service(tmp_path, client=client)
+
+    await service.run_once()
+
+    assert store.list_notifications() == []
+    state = store.get_state("01347.HK", "30m")
+    assert state.chart["longTerm"]["operation"] == "买入触发"
+    assert state.chart["longTerm"]["bar_completion"] == "FORMING"
+
+
+@pytest.mark.asyncio
+async def test_long_term_event_dedupes_then_reactivation_uses_its_own_sequence(
+    tmp_path,
+) -> None:
+    client = FakeClient(
+        long_operation="卖出触发",
+        long_signal_stage="CONFIRMED",
+        long_line_id="LONG-SUPPORT-9",
+        long_completion="FINAL",
+    )
+    current_now = NOW
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    service = DowMonitorService(
+        store,
+        FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: current_now,
+    )
+
+    await service.run_once()
+    current_now += timedelta(minutes=1)
+    await service.run_once()
+    client.long_operation = "观察"
+    client.long_signal_stage = "NONE"
+    client.long_line_id = None
+    current_now += timedelta(minutes=1)
+    await service.run_once()
+    inactive = store.get_state("01347.HK", "30m")
+    store.save_state(inactive.model_copy(update={"source_timestamp": current_now}))
+    client.long_operation = "卖出触发"
+    client.long_signal_stage = "CONFIRMED"
+    client.long_line_id = "LONG-SUPPORT-9"
+    current_now += timedelta(minutes=1)
+    await service.run_once()
+
+    keys = {item.event_key for item in store.list_notifications() if item.timeframe == "30m"}
+    assert keys == {
+        "01347.HK|30m|LONG_TERM_SELL|LONG-SUPPORT-9|1",
+        "01347.HK|30m|LONG_TERM_SELL|LONG-SUPPORT-9|2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_long_term_first_state_crash_recovers_from_notification_history(
+    tmp_path,
+) -> None:
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    class CrashAfterLongNotificationStore(DowMonitorStore):
+        crashed = False
+
+        def save_state(self, state):
+            long_written = any(
+                "|LONG_TERM_BUY|" in item.event_key for item in self.list_notifications(limit=100)
+            )
+            if state.timeframe == "30m" and long_written and not self.crashed:
+                self.crashed = True
+                raise SimulatedProcessCrash
+            return super().save_state(state)
+
+    client = FakeClient(
+        long_operation="买入触发",
+        long_signal_stage="TRIGGER",
+        long_line_id="LONG-RESISTANCE-7",
+        long_completion="FINAL",
+    )
+    store = CrashAfterLongNotificationStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    service = DowMonitorService(
+        store,
+        FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await service.run_once()
+    restored = DowMonitorStore(tmp_path)
+    restarted = DowMonitorService(
+        restored,
+        FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW + timedelta(minutes=1),
+    )
+    await restarted.run_once()
+
+    keys = [item.event_key for item in restored.list_notifications() if item.timeframe == "30m"]
+    assert keys == ["01347.HK|30m|LONG_TERM_BUY|LONG-RESISTANCE-7|1"]
 
 
 @pytest.mark.asyncio

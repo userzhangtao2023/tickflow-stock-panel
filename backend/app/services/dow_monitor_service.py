@@ -22,6 +22,7 @@ from app.services.dow_monitor_bars import (
 from app.services.dow_monitor_client import (
     DowEngineResult,
     DowEngineUnavailable,
+    DowLongTermSnapshot,
     DowSnapshot,
 )
 from app.services.dow_monitor_data import WebStockBatch, market_session_policy
@@ -67,12 +68,25 @@ def notification_side(action_code: str) -> Literal["BUY", "SELL", "RISK"] | None
     return None
 
 
-def transition_event(
+def long_term_signal_family(snapshot: DowLongTermSnapshot) -> str | None:
+    if (
+        snapshot.bar_completion != "FINAL"
+        or snapshot.signal_stage not in {"TRIGGER", "CONFIRMED"}
+        or snapshot.line_id is None
+    ):
+        return None
+    if snapshot.operation == "买入触发":
+        return "LONG_TERM_BUY"
+    if snapshot.operation == "卖出触发":
+        return "LONG_TERM_SELL"
+    return None
+
+
+def _transition_values(
     previous: ActivationState | None,
-    snapshot: DowSnapshot,
+    family: str | None,
+    structure_id: str | None,
 ) -> EventTransition:
-    family = signal_family(snapshot.action_code)
-    structure_id = snapshot.line_id
     active = family is not None and structure_id is not None
     if not active:
         return EventTransition(
@@ -84,7 +98,6 @@ def transition_event(
             ),
             notify=False,
         )
-
     same = (
         previous is not None
         and previous.active
@@ -97,14 +110,18 @@ def transition_event(
         else (previous.activation_sequence + 1 if previous else 1)
     )
     return EventTransition(
-        next=ActivationState(
-            active=True,
-            family=family,
-            structure_id=structure_id,
-            activation_sequence=sequence,
-        ),
+        next=ActivationState(True, family, structure_id, sequence),
         notify=not same,
     )
+
+
+def transition_event(
+    previous: ActivationState | None,
+    snapshot: DowSnapshot,
+) -> EventTransition:
+    family = signal_family(snapshot.action_code)
+    structure_id = snapshot.line_id
+    return _transition_values(previous, family, structure_id)
 
 
 class DowMonitorService:
@@ -381,11 +398,25 @@ class DowMonitorService:
             notification_index,
         )
         transition = transition_event(previous, result.snapshot)
+        long_family = long_term_signal_family(result.long_term)
+        long_previous = self._long_term_activation_from_state(
+            item.symbol,
+            timeframe,
+            previous_state,
+            result.long_term,
+            notification_index,
+        )
+        long_transition = _transition_values(
+            long_previous,
+            long_family,
+            result.long_term.line_id if long_family is not None else None,
+        )
         engine_payload = result.model_dump(mode="json", by_alias=True)
         chart = {
             "bars": deepcopy(engine_payload["bars"]),
             "lines": deepcopy(engine_payload["lines"]),
             "signals": deepcopy(engine_payload["signals"]),
+            "longTerm": deepcopy(engine_payload["longTerm"]),
         }
         timestamps = [
             value
@@ -397,9 +428,28 @@ class DowMonitorService:
         ]
         source_timestamp = max(timestamps, default=None)
 
-        if transition.notify:
-            side = notification_side(result.snapshot.action_code)
-            if side is not None:
+        events = (
+            (
+                transition,
+                notification_side(result.snapshot.action_code),
+                result.snapshot.action,
+                result.snapshot.phase,
+            ),
+            (
+                long_transition,
+                (
+                    "BUY"
+                    if long_transition.next.family == "LONG_TERM_BUY"
+                    else "SELL"
+                    if long_transition.next.family == "LONG_TERM_SELL"
+                    else None
+                ),
+                result.long_term.operation,
+                result.long_term.pattern_name,
+            ),
+        )
+        for event_transition, side, action_name, shape_name in events:
+            if event_transition.notify and side is not None:
                 current = engine_payload["bars"][-1]
                 current_ohlc = {
                     key: deepcopy(current[key])
@@ -416,9 +466,9 @@ class DowMonitorService:
                     (
                         item.symbol,
                         timeframe,
-                        transition.next.family or "",
-                        transition.next.structure_id or "",
-                        str(transition.next.activation_sequence),
+                        event_transition.next.family or "",
+                        event_transition.next.structure_id or "",
+                        str(event_transition.next.activation_sequence),
                     )
                 )
                 notification = DowNotification(
@@ -428,8 +478,8 @@ class DowMonitorService:
                     market=item.market,
                     timeframe=timeframe,
                     side=side,
-                    action_name=result.snapshot.action,
-                    shape_name=result.snapshot.phase,
+                    action_name=action_name,
+                    shape_name=shape_name,
                     triggered_at=result.evaluated_at,
                     trigger_price=float(current["close"]),
                     snapshot_payload=deepcopy(
@@ -441,7 +491,7 @@ class DowMonitorService:
                                 if source_timestamp is not None
                                 else None
                             ),
-                            "activation": asdict(transition.next),
+                            "activation": asdict(event_transition.next),
                         }
                     ),
                 )
@@ -499,6 +549,69 @@ class DowMonitorService:
         )
         return recorded or previous
 
+    def _long_term_activation_from_state(
+        self,
+        symbol: str,
+        timeframe: str,
+        state: DowTimeframeState | None,
+        current: DowLongTermSnapshot,
+        notification_index: NotificationIndex,
+    ) -> ActivationState | None:
+        sequence = self._maximum_sequence(
+            symbol,
+            timeframe,
+            notification_index,
+            long_term=True,
+        )
+        current_family = long_term_signal_family(current)
+        current_structure = current.line_id if current_family is not None else None
+        if state is None:
+            recorded = self._recorded_activation_values(
+                symbol,
+                timeframe,
+                None,
+                current_family,
+                current_structure,
+                notification_index,
+            )
+            return recorded or (ActivationState(False, None, None, sequence) if sequence else None)
+        raw = state.chart.get("longTerm")
+        stored_family = None
+        stored_structure = None
+        if isinstance(raw, dict):
+            operation = raw.get("operation")
+            if (
+                raw.get("bar_completion") == "FINAL"
+                and raw.get("signal_stage") in {"TRIGGER", "CONFIRMED"}
+                and isinstance(raw.get("line_id"), str)
+                and raw.get("line_id")
+            ):
+                stored_family = (
+                    "LONG_TERM_BUY"
+                    if operation == "买入触发"
+                    else "LONG_TERM_SELL"
+                    if operation == "卖出触发"
+                    else None
+                )
+                stored_structure = raw.get("line_id") if stored_family is not None else None
+        previous = ActivationState(
+            active=stored_family is not None and stored_structure is not None,
+            family=stored_family,
+            structure_id=stored_structure,
+            activation_sequence=sequence,
+        )
+        if previous.active:
+            return previous
+        recorded = self._recorded_activation_values(
+            symbol,
+            timeframe,
+            state,
+            current_family,
+            current_structure,
+            notification_index,
+        )
+        return recorded or previous
+
     def _recorded_activation_after_state(
         self,
         symbol: str,
@@ -509,6 +622,24 @@ class DowMonitorService:
     ) -> ActivationState | None:
         family = signal_family(current.action_code)
         structure_id = current.line_id
+        return self._recorded_activation_values(
+            symbol,
+            timeframe,
+            state,
+            family,
+            structure_id,
+            notification_index,
+        )
+
+    def _recorded_activation_values(
+        self,
+        symbol: str,
+        timeframe: str,
+        state: DowTimeframeState | None,
+        family: str | None,
+        structure_id: str | None,
+        notification_index: NotificationIndex,
+    ) -> ActivationState | None:
         if family is None or structure_id is None:
             return None
         for notification in notification_index.get((symbol, timeframe), []):
@@ -570,10 +701,18 @@ class DowMonitorService:
         symbol: str,
         timeframe: str,
         notification_index: NotificationIndex,
+        *,
+        long_term: bool = False,
     ) -> int:
         maximum = 0
         for notification in notification_index.get((symbol, timeframe), []):
             activation = notification.snapshot_payload.get("activation")
+            family = activation.get("family") if isinstance(activation, dict) else None
+            if not isinstance(family, str):
+                parts = notification.event_key.split("|")
+                family = parts[2] if len(parts) == 5 else None
+            if isinstance(family, str) and family.startswith("LONG_TERM_") != long_term:
+                continue
             if isinstance(activation, dict):
                 try:
                     maximum = max(maximum, int(activation["activation_sequence"]))

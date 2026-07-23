@@ -93,6 +93,39 @@ class DowSnapshot(_EngineModel):
     reason_codes: tuple[str, ...]
 
 
+class DowLongTermSnapshot(_EngineModel):
+    symbol: str
+    timeframe: str
+    bar_time: str
+    bar_completion: str
+    provisional: bool
+    trend_direction: str
+    trend_name: str
+    pattern_name: str
+    operation: str
+    signal_stage: str
+    breakout_type: str
+    line_id: str | None
+    line_side: str | None
+    line_status: str | None
+    first_anchor_time: str | None
+    first_anchor_price: float | None
+    second_anchor_time: str | None
+    second_anchor_price: float | None
+    line_value: float | None
+    key_level_type: str | None
+    key_level_time: str | None
+    key_level_price: float | None
+    first_break_time: str | None
+    recent_low_scale: str | None
+    recent_low_label: str | None
+    recent_low_time: str | None
+    recent_low_price: float | None
+    recent_low_confirmed_time: str | None
+    evidence_codes: tuple[str, ...]
+    failure_reason: str | None
+
+
 class DowEngineResult(_EngineModel):
     symbol: str
     timeframe: str
@@ -100,6 +133,7 @@ class DowEngineResult(_EngineModel):
     bars: tuple[DowBar, ...]
     lines: tuple[DowLine, ...]
     signals: tuple[DowSignal, ...]
+    long_term: DowLongTermSnapshot = Field(alias="longTerm")
     evaluated_at: datetime = Field(alias="evaluatedAt")
 
 

@@ -1,5 +1,30 @@
 version: 1
 requirements:
+  - id: REQ-DOW-WATCH-LONG-CLIENT-001
+    specification: SPEC-DOW-WATCH-LONG-001
+    implementation:
+      - backend/app/services/dow_monitor_client.py
+      - backend/app/services/dow_monitor_service.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_client.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-watch-long-term-sidecar.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-watch-long-term-sidecar.md, type: independent-review}
+  - id: REQ-DOW-WATCH-LONG-EVENT-001
+    specification: SPEC-DOW-WATCH-LONG-001
+    implementation: backend/app/services/dow_monitor_service.py
+    tests: {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-watch-long-term-sidecar.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-watch-long-term-sidecar.md, type: independent-review}
+  - id: REQ-DOW-WATCH-LONG-RECOVERY-001
+    specification: SPEC-DOW-WATCH-LONG-001
+    implementation: backend/app/services/dow_monitor_service.py
+    tests: {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-watch-long-term-sidecar.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-watch-long-term-sidecar.md, type: independent-review}
   - id: REQ-GLOBAL-INDEX-API-001
     specification: SPEC-GLOBAL-INDEX-REALTIME-001
     implementation: backend/app/api/intraday.py

@@ -67,10 +67,7 @@ def _engine_response() -> dict[str, object]:
             "action_code": "WATCH",
             "reason_codes": ["LINE_PRESENT"],
         },
-        "bars": [
-            {"index": index, **bar}
-            for index, bar in enumerate(_bars())
-        ],
+        "bars": [{"index": index, **bar} for index, bar in enumerate(_bars())],
         "lines": [
             {
                 "id": "SUPPORT-MAIN-1",
@@ -114,6 +111,38 @@ def _engine_response() -> dict[str, object]:
                 ],
             }
         ],
+        "longTerm": {
+            "symbol": "01347.HK",
+            "timeframe": "30m",
+            "bar_time": "2026-07-23T10:30:00+08:00",
+            "bar_completion": "FORMING",
+            "provisional": True,
+            "trend_direction": "DOWN",
+            "trend_name": "长期下降趋势",
+            "pattern_name": "长期下降趋势双突破",
+            "operation": "观察",
+            "signal_stage": "WARNING",
+            "breakout_type": "DOUBLE_BREAKOUT",
+            "line_id": "LONG-RESISTANCE-7",
+            "line_side": "RESISTANCE",
+            "line_status": "BREAK_PENDING",
+            "first_anchor_time": "2026-07-17T15:00:00+08:00",
+            "first_anchor_price": 143.0,
+            "second_anchor_time": "2026-07-20T13:30:00+08:00",
+            "second_anchor_price": 142.0,
+            "line_value": 141.5,
+            "key_level_type": "PRIMARY_LL",
+            "key_level_time": "2026-07-17T14:30:00+08:00",
+            "key_level_price": 136.3,
+            "first_break_time": "2026-07-23T10:00:00+08:00",
+            "recent_low_scale": "PRIMARY",
+            "recent_low_label": "LL",
+            "recent_low_time": "2026-07-17T14:30:00+08:00",
+            "recent_low_price": 136.3,
+            "recent_low_confirmed_time": "2026-07-17T15:00:00+08:00",
+            "evidence_codes": ["LONG_LINE_BREAK", "KEY_LEVEL_BREAK"],
+            "failure_reason": None,
+        },
         "evaluatedAt": "2026-07-23T10:47:15+08:00",
     }
 
@@ -162,6 +191,9 @@ def test_client_sends_exact_external_bar_contract_and_preserves_engine_fields() 
     assert result.lines[0].anchor_times == result.snapshot.line_anchor_times
     assert result.signals[0].evidence[0].structure_id == "SUPPORT-MAIN-1"
     assert result.signals[0].side == "BUY"
+    assert result.long_term.pattern_name == "长期下降趋势双突破"
+    assert result.long_term.first_anchor_time == "2026-07-17T15:00:00+08:00"
+    assert result.long_term.evidence_codes == ("LONG_LINE_BREAK", "KEY_LEVEL_BREAK")
 
 
 def test_client_preserves_final_contract_without_reclassifying_bars() -> None:
@@ -188,6 +220,13 @@ def test_client_preserves_final_contract_without_reclassifying_bars() -> None:
         httpx.Response(502, json={"detail": "upstream unavailable"}),
         httpx.Response(200, content=b"not-json", headers={"content-type": "application/json"}),
         httpx.Response(200, json={"symbol": "01347.HK"}),
+        httpx.Response(
+            200,
+            json={
+                **_engine_response(),
+                "longTerm": {**_engine_response()["longTerm"], "unexpected": True},
+            },
+        ),
     ],
 )
 def test_client_maps_http_json_and_schema_failures_to_engine_unavailable(

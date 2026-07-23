@@ -53,6 +53,14 @@ specifications:
     path: docs/superpowers/specs/2026-07-23-dow-realtime-watch-panel-design.md
     status: authoritative
     requirements: []
+  - id: SPEC-DOW-WATCH-LONG-001
+    path: docs/specs/dow-watch-long-term-sidecar.md
+    status: authoritative
+    authority: supplements SPEC-DOW-WATCH-001 for the approved independent long-term monitoring sidecar; DOW-LONG-001 and SPEC-DOW-EXTERNAL-STATE-001 prevail for lower-layer long-horizon and serialization semantics
+    requirements:
+      - REQ-DOW-WATCH-LONG-CLIENT-001
+      - REQ-DOW-WATCH-LONG-EVENT-001
+      - REQ-DOW-WATCH-LONG-RECOVERY-001
 conflicts: []
 exceptions:
   - id: EXC-DOW-WATCH-IMPLEMENTATION-001
