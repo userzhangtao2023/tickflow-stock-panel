@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 import pytest
 
+from app.services import dow_monitor_data
 from app.services.dow_monitor_data import (
     WebStockMonitorGateway,
     expected_minutes,
@@ -624,6 +625,37 @@ def test_history_and_fetch_since_empty_inputs_do_not_access_provider() -> None:
     assert batch.minute_rows.is_empty()
     assert batch.freshness_by_symbol == {}
     assert provider.calls == []
+
+
+def test_history_bootstrap_calls_longbridge_once_per_normalized_symbol(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict, float]] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {"bars": [{"time": "2026-07-22T15:59:00+08:00"}]}
+
+    def fake_get(url: str, *, params: dict, timeout: float):
+        calls.append((url, params, timeout))
+        return Response()
+
+    monkeypatch.setenv("LONGBRIDGE_API_URL", "http://longbridge:19912/")
+    monkeypatch.setattr(dow_monitor_data.httpx, "get", fake_get)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    WebStockMonitorGateway(provider).bootstrap_history(
+        [" 01347.HK ", "01347.HK"],
+    )
+
+    assert calls == [(
+        "http://longbridge:19912/api/stocks/01347.HK/klines",
+        {"period": "1m", "limit": 1000},
+        20.0,
+    )]
 
 
 @pytest.mark.parametrize(

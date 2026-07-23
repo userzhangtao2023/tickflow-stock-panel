@@ -57,6 +57,21 @@ def _symbols_sql(symbols: list[str]) -> str:
     return _values_sql([symbol.upper() for symbol in symbols])
 
 
+def _storage_symbol_aliases(symbols: list[str]) -> dict[str, str]:
+    """Map WebStock storage aliases back to requested canonical symbols."""
+    aliases: dict[str, str] = {}
+    for value in symbols:
+        requested = str(value).strip().upper()
+        if not requested:
+            continue
+        aliases.setdefault(requested, requested)
+        if requested.endswith(".HK"):
+            code = requested[:-3]
+            if code.isdigit():
+                aliases.setdefault(f"{int(code)}.HK", requested)
+    return aliases
+
+
 def _date_filter(column: str, start: datetime | None, end: datetime | None) -> str:
     parts: list[str] = []
     if start is not None:
@@ -214,17 +229,26 @@ class ClickHouseProvider:
         ]
         frames: list[pl.DataFrame] = []
         for index, symbol_chunk in enumerate(symbol_chunks, start=1):
+            symbol_aliases = _storage_symbol_aliases(symbol_chunk)
             sql = f"""
                 SELECT symbol, market, trade_date, open, high, low, close,
                        volume, turnover AS amount
                 FROM {self._table("lb_daily_bars")}
                 WHERE adjusted = 1
-                  AND symbol IN {_symbols_sql(symbol_chunk)}
+                  AND symbol IN {_symbols_sql(list(symbol_aliases))}
                   {_date_filter("trade_date", start_time, end_time)}
                 ORDER BY symbol, trade_date
             """
             rows = self._query(sql)
-            normalized_rows = [dict(row, amount=row.get("amount", row.get("turnover"))) for row in rows]
+            normalized_rows = [
+                dict(
+                    row,
+                    symbol=symbol_aliases.get(str(row.get("symbol") or "").upper()),
+                    amount=row.get("amount", row.get("turnover")),
+                )
+                for row in rows
+                if str(row.get("symbol") or "").upper() in symbol_aliases
+            ]
             frame = normalize_daily(normalized_rows, source=self.name)
             if not frame.is_empty():
                 frames.append(frame)
@@ -276,6 +300,7 @@ class ClickHouseProvider:
         # apply the requested date after converting each bar to its market time.
         query_start = start_time - timedelta(days=1) if start_time is not None else None
         query_end = end_time + timedelta(days=1) if end_time is not None else None
+        symbol_aliases = _storage_symbol_aliases(symbols)
         sql = f"""
             SELECT symbol, market, bar_time_utc, open, high, low, close, volume, amount,
                    source_priority
@@ -284,7 +309,7 @@ class ClickHouseProvider:
                        2 AS source_priority
                 FROM {self._table("lb_minute_bars")}
                 WHERE frequency = {_sql_string(freq)}
-                  AND symbol IN {_symbols_sql(symbols)}
+                  AND symbol IN {_symbols_sql(list(symbol_aliases))}
                   {_date_filter("trade_date_local", query_start, query_end)}
                 UNION ALL
                 SELECT symbol, market, toTimeZone(line_time, 'UTC') AS bar_time_utc,
@@ -317,8 +342,10 @@ class ClickHouseProvider:
         end_time: datetime | None,
     ) -> pl.DataFrame:
         mapped_by_key: dict[tuple[str, datetime], dict[str, Any]] = {}
+        symbol_aliases = _storage_symbol_aliases(symbols)
         for row in rows:
-            symbol = str(row.get("symbol") or "").upper()
+            stored_symbol = str(row.get("symbol") or "").upper()
+            symbol = symbol_aliases.get(stored_symbol)
             if not symbol or row.get("bar_time_utc") is None:
                 continue
             item = dict(row)
@@ -420,12 +447,13 @@ class ClickHouseProvider:
         return self._query(sql)
 
     def _query_realtime_rows_strict(self, symbols: list[str]) -> list[dict]:
+        symbol_aliases = _storage_symbol_aliases(symbols)
         sql = f"""
             WITH latest_quotes AS (
                 SELECT symbol, market, snapshot_minute, last_done, prev_close,
                        open, high, low, change_value, change_percentage, volume, turnover
                 FROM {self._table("lb_realtime_quotes")}
-                WHERE symbol IN {_symbols_sql(symbols)}
+                WHERE symbol IN {_symbols_sql(list(symbol_aliases))}
                   AND snapshot_minute >= now('Asia/Shanghai') - INTERVAL 1 DAY
                   AND snapshot_minute <= now('Asia/Shanghai')
                 ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
@@ -434,7 +462,7 @@ class ClickHouseProvider:
             symbol_metadata AS (
                 SELECT symbol, argMax(name, updated_at) AS name
                 FROM {self._table("lb_symbols")}
-                WHERE symbol IN {_symbols_sql(symbols)}
+                WHERE symbol IN {_symbols_sql(list(symbol_aliases))}
                 GROUP BY symbol
             )
             SELECT quote.symbol, quote.market, quote.snapshot_minute, quote.last_done,
@@ -447,10 +475,18 @@ class ClickHouseProvider:
         return self._query(sql)
 
     @staticmethod
-    def _normalize_realtime_query_rows(rows: list[dict]) -> list[dict]:
+    def _normalize_realtime_query_rows(
+        rows: list[dict],
+        symbol_aliases: dict[str, str] | None = None,
+    ) -> list[dict]:
         records: list[dict] = []
         for row in rows:
-            symbol = str(row.get("symbol") or "").upper()
+            stored_symbol = str(row.get("symbol") or "").upper()
+            symbol = (
+                symbol_aliases.get(stored_symbol)
+                if symbol_aliases is not None
+                else stored_symbol
+            )
             if not symbol:
                 continue
             timestamp = None
@@ -477,7 +513,10 @@ class ClickHouseProvider:
     def get_realtime_strict(self, symbols: list[str]) -> list[dict]:
         if not symbols:
             return []
-        return self._normalize_realtime_query_rows(self._query_realtime_rows_strict(symbols))
+        return self._normalize_realtime_query_rows(
+            self._query_realtime_rows_strict(symbols),
+            _storage_symbol_aliases(symbols),
+        )
 
     def get_realtime(
         self,

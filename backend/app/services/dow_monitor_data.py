@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+import httpx
 import polars as pl
 
 from app.market_rules import market_for_symbol
@@ -179,6 +182,23 @@ class WebStockMonitorGateway:
     ) -> None:
         self._provider = provider
         self._now_fn = now_fn
+
+    def bootstrap_history(self, symbols: list[str]) -> None:
+        endpoint = os.getenv("LONGBRIDGE_API_URL", "").strip().rstrip("/")
+        if not endpoint:
+            raise RuntimeError("LONGBRIDGE_API_URL is required for history bootstrap")
+        timeout = float(os.getenv("LONGBRIDGE_API_TIMEOUT_SECONDS", "20"))
+        for symbol in _normalize_symbols(symbols):
+            response = httpx.get(
+                f"{endpoint}/api/stocks/{quote(symbol, safe='')}/klines",
+                params={"period": "1m", "limit": 1000},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            bars = payload.get("bars") if isinstance(payload, dict) else None
+            if not isinstance(bars, list) or not bars:
+                raise RuntimeError(f"{symbol} history bootstrap returned no bars")
 
     def fetch(
         self,

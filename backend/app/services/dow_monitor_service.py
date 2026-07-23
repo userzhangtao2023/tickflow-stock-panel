@@ -152,6 +152,7 @@ class DowMonitorService:
         self._last_error: str | None = None
         self._errors: dict[str, str] = {}
         self._latest_quotes_by_symbol: dict[str, dict] = {}
+        self._history_bootstrap_attempted: set[str] = set()
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -235,6 +236,32 @@ class DowMonitorService:
                 message = str(exc)
                 warmup_errors.update(dict.fromkeys(cold_live_symbols, message))
             else:
+                bootstrap_symbols = [
+                    symbol
+                    for symbol in cold_live_symbols
+                    if symbol not in self._history_bootstrap_attempted
+                    and (
+                        (coverage := history.coverage_by_symbol.get(symbol)) is None
+                        or coverage.reason == "NO_PRIOR_SESSION"
+                    )
+                ]
+                if bootstrap_symbols:
+                    self._history_bootstrap_attempted.update(bootstrap_symbols)
+                    try:
+                        await asyncio.to_thread(
+                            self._data_gateway.bootstrap_history,
+                            bootstrap_symbols,
+                        )
+                        history = await asyncio.to_thread(
+                            self._data_gateway.load_history,
+                            cold_live_symbols,
+                            now,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "dow monitor history bootstrap failed: %s",
+                            ", ".join(bootstrap_symbols),
+                        )
                 history_rows = history.minute_rows
                 for symbol in cold_live_symbols:
                     coverage = history.coverage_by_symbol.get(symbol)

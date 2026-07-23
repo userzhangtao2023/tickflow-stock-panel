@@ -120,6 +120,7 @@ class FakeGateway:
         self.history = history
         self.calls: list[tuple[dict[str, datetime], datetime]] = []
         self.history_calls: list[tuple[list[str], datetime]] = []
+        self.bootstrap_calls: list[list[str]] = []
 
     def fetch_since(
         self,
@@ -138,6 +139,9 @@ class FakeGateway:
         if self.history is not None:
             return self.history
         return _complete_history(symbols)
+
+    def bootstrap_history(self, symbols: list[str]) -> None:
+        self.bootstrap_calls.append(list(symbols))
 
 
 def _complete_history(
@@ -1591,6 +1595,52 @@ async def test_incomplete_latest_t_minus_one_pauses_cold_symbol_without_engine(
         service.status()["errors"]["01347.HK"]
         == "HISTORY_INCOMPLETE:LATEST_PRIOR_SESSION_INCOMPLETE"
     )
+
+
+@pytest.mark.asyncio
+async def test_no_prior_session_bootstraps_once_then_strictly_reloads_history(
+    tmp_path,
+) -> None:
+    incomplete = WebStockHistory(
+        minute_rows=pl.DataFrame(),
+        coverage_by_symbol={
+            "01347.HK": WebStockHistoryCoverage(
+                earliest_timestamp=None,
+                latest_timestamp=None,
+                latest_prior_session_date=None,
+                latest_prior_session_complete=False,
+                state="INCOMPLETE",
+                reason="NO_PRIOR_SESSION",
+            )
+        },
+    )
+
+    class BootstrapGateway(FakeGateway):
+        def bootstrap_history(self, symbols: list[str]) -> None:
+            super().bootstrap_history(symbols)
+            self.history = _complete_history(symbols)
+
+    gateway = BootstrapGateway(_batch("01347.HK"), incomplete)
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    assert gateway.bootstrap_calls == [["01347.HK"]]
+    assert gateway.history_calls == [
+        (["01347.HK"], NOW),
+        (["01347.HK"], NOW),
+    ]
+    assert len(client.calls) == 5
+    assert service.status()["errors"] == {}
 
 
 @pytest.mark.asyncio

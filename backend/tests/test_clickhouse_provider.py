@@ -62,6 +62,26 @@ def test_daily_maps_turnover_to_amount_and_filters_adjusted() -> None:
     assert "'1.HK'" in query.queries[-1]
 
 
+def test_daily_maps_unpadded_webstock_hk_symbol_to_requested_symbol() -> None:
+    query = QueryRecorder([{
+        "symbol": "1347.HK",
+        "trade_date": "2026-07-22",
+        "open": 160,
+        "high": 164,
+        "low": 158,
+        "close": 160.9,
+        "volume": 49_800_238,
+        "turnover": 8_219_757_554.55,
+        "market": "hk",
+    }])
+    provider = ClickHouseProvider(query_fn=query)
+
+    frame = provider.get_daily(["01347.HK"], None, None)
+
+    assert frame.get_column("symbol").to_list() == ["01347.HK"]
+    assert "symbol IN ('01347.HK', '1347.HK')" in query.queries[-1]
+
+
 def test_daily_uses_longbridge_fallback_for_symbols_missing_from_clickhouse() -> None:
     provider = ClickHouseProvider(query_fn=QueryRecorder([]))
     requested: list[str] = []
@@ -388,6 +408,32 @@ def test_strict_minute_marks_clickhouse_rows_as_webstock() -> None:
     }]
 
 
+def test_strict_minute_maps_unpadded_webstock_hk_symbol_to_requested_symbol() -> None:
+    query = QueryRecorder([{
+        "symbol": "1347.HK",
+        "market": "hk",
+        "bar_time_utc": "2026-07-23 01:30:00",
+        "open": 140,
+        "high": 141,
+        "low": 139,
+        "close": 140.5,
+        "volume": 100,
+        "amount": 14050,
+        "source_priority": 2,
+        "cumulative_snapshot": 0,
+    }])
+    provider = ClickHouseProvider(query_fn=query)
+
+    frame = provider.get_minute_strict(
+        ["01347.HK"],
+        datetime(2026, 7, 23, 9, 30),
+        datetime(2026, 7, 23, 16, 0),
+    )
+
+    assert frame.get_column("symbol").to_list() == ["01347.HK"]
+    assert "symbol IN ('01347.HK', '1347.HK')" in query.queries[-1]
+
+
 def test_strict_realtime_uses_only_clickhouse_query(monkeypatch) -> None:
     query = QueryRecorder([{
         "symbol": "01347.HK",
@@ -413,8 +459,30 @@ def test_strict_realtime_uses_only_clickhouse_query(monkeypatch) -> None:
     rows = provider.get_realtime_strict(["01347.HK"])
 
     assert [row["symbol"] for row in rows] == ["01347.HK"]
-    assert "symbol IN ('01347.HK')" in query.queries[-1]
+    assert "symbol IN ('01347.HK', '1347.HK')" in query.queries[-1]
     assert "toStartOfDay(now('Asia/Shanghai'))" not in query.queries[-1]
+
+
+def test_strict_realtime_maps_unpadded_webstock_hk_symbol_to_requested_symbol() -> None:
+    query = QueryRecorder([{
+        "symbol": "1347.HK",
+        "market": "hk",
+        "snapshot_minute": "2026-07-23 10:01:00",
+        "last_done": 140.5,
+        "prev_close": 139,
+        "open": 140,
+        "high": 141,
+        "low": 139,
+        "change_value": 1.5,
+        "change_percentage": 1.0791,
+        "volume": 100,
+        "turnover": 14050,
+    }])
+    provider = ClickHouseProvider(query_fn=query)
+
+    rows = provider.get_realtime_strict(["01347.HK"])
+
+    assert [row["symbol"] for row in rows] == ["01347.HK"]
 
 
 def test_strict_realtime_empty_monitor_list_does_not_query_all_symbols() -> None:
