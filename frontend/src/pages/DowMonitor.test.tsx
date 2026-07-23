@@ -480,6 +480,37 @@ describe('Dow monitor page', () => {
     expect(badge).not.toHaveClass('text-emerald-400', 'text-red-400')
   })
 
+  it('keeps current short actions red when the chart contains a historical buy', () => {
+    const shortActions = structuredClone(overview)
+    const historicalBuy = {
+      ...authoritativeChart,
+      signals: [authoritativeChart.signals![0]],
+    }
+    shortActions.symbols[0].states['30m'] = state(
+      '01347.HK',
+      'hk',
+      '30m',
+      'OPEN_SHORT',
+      'LIVE',
+      historicalBuy,
+    )
+    shortActions.symbols[0].states.day = state(
+      '01347.HK',
+      'hk',
+      'day',
+      'CLOSE_SHORT',
+      'LIVE',
+      historicalBuy,
+    )
+    hooks.overview = { data: shortActions, isError: false, isLoading: false }
+
+    render(<DowMonitor />)
+
+    const card = screen.getByTestId('card-01347.HK')
+    expect(within(card).getByRole('button', { name: '30分' })).toHaveClass('text-red-400')
+    expect(within(card).getByRole('button', { name: '日K' })).toHaveClass('text-red-400')
+  })
+
   it('shows the compact no-signal state without inventing a notification', async () => {
     const user = userEvent.setup()
     render(<DowMonitor />)

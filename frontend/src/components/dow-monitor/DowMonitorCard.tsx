@@ -33,7 +33,9 @@ function visualState(
   const actionCode = typeof rawActionCode === 'string' ? rawActionCode.toUpperCase() : null
   if (actionCode === 'OPEN_LONG' || actionCode === 'BUY') return 'buy'
   if (
-    actionCode === 'CLOSE_LONG'
+    actionCode === 'OPEN_SHORT'
+    || actionCode === 'CLOSE_LONG'
+    || actionCode === 'CLOSE_SHORT'
     || actionCode === 'SELL'
     || actionCode === 'RISK'
     || actionCode === 'REDUCE'
