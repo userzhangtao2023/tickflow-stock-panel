@@ -239,17 +239,31 @@ class WebStockMonitorGateway:
 
         minute_rows = self._provider.get_minute_strict(normalized_symbols, None, end)
         rows = minute_rows.to_dicts() if not minute_rows.is_empty() else []
+        zones_by_symbol = {
+            symbol: ZoneInfo(market_session_policy(symbol).timezone)
+            for symbol in normalized_symbols
+        }
+        end_by_symbol = {
+            symbol: _as_market_local(end, zone) for symbol, zone in zones_by_symbol.items()
+        }
+        local_times_by_symbol: dict[str, list[datetime]] = {
+            symbol: [] for symbol in normalized_symbols
+        }
+        causal_mask: list[bool] = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            zone = zones_by_symbol.get(symbol)
+            local_time = _minute_local(row.get("datetime"), zone) if zone is not None else None
+            keep = local_time is not None and local_time <= end_by_symbol[symbol]
+            causal_mask.append(keep)
+            if keep:
+                local_times_by_symbol[symbol].append(local_time)
+        causal_minute_rows = minute_rows.filter(pl.Series(causal_mask)) if rows else minute_rows
+
         coverage_by_symbol: dict[str, WebStockHistoryCoverage] = {}
         for symbol in normalized_symbols:
-            policy = market_session_policy(symbol)
-            zone = ZoneInfo(policy.timezone)
-            local_times = [
-                local_time
-                for row in rows
-                if str(row.get("symbol") or "").upper() == symbol
-                and (local_time := _minute_local(row.get("datetime"), zone)) is not None
-            ]
-            end_local_date = _as_market_local(end, zone).date()
+            local_times = local_times_by_symbol[symbol]
+            end_local_date = end_by_symbol[symbol].date()
             prior_session_times = {
                 local_time
                 for local_time in local_times
@@ -279,7 +293,7 @@ class WebStockMonitorGateway:
                 reason=reason,
             )
         return WebStockHistory(
-            minute_rows=minute_rows,
+            minute_rows=causal_minute_rows,
             coverage_by_symbol=coverage_by_symbol,
         )
 

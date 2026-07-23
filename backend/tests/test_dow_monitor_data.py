@@ -516,6 +516,34 @@ def test_hk_history_completeness_respects_lunch_and_ignores_close_rows() -> None
     assert coverage.state == "COMPLETE"
 
 
+def test_hk_history_excludes_same_day_rows_after_exact_end() -> None:
+    symbol = "01347.HK"
+    end = datetime(2026, 7, 23, 10, 0, tzinfo=HK)
+    provider = StubStrictProvider(
+        quotes=[],
+        minute_rows=_minutes(
+            symbol,
+            datetime(2026, 7, 23, 9, 59, tzinfo=HK),
+            datetime(2026, 7, 23, 15, 0, tzinfo=HK),
+        ),
+    )
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [symbol],
+        end,
+    )
+
+    assert provider.calls == [("minute", [symbol], None, end)]
+    assert history.minute_rows.get_column("datetime").to_list() == [datetime(2026, 7, 23, 9, 59)]
+    assert history.coverage_by_symbol[symbol].latest_timestamp == datetime(
+        2026,
+        7,
+        23,
+        9,
+        59,
+    )
+
+
 def test_us_history_completeness_uses_dst_market_local_session() -> None:
     symbol = "INTC.US"
     utc_values = [
@@ -536,6 +564,32 @@ def test_us_history_completeness_uses_dst_market_local_session() -> None:
     assert coverage.latest_timestamp == datetime(2026, 3, 9, 15, 59)
     assert coverage.latest_prior_session_date == datetime(2026, 3, 9).date()
     assert coverage.latest_prior_session_complete is True
+
+
+def test_us_history_filters_exact_end_across_utc_local_date_boundary() -> None:
+    symbol = "INTC.US"
+    end = datetime(2026, 7, 24, 0, 0, tzinfo=UTC)
+    utc_values = [
+        datetime(2026, 7, 23, 19, 59, tzinfo=UTC),
+        datetime(2026, 7, 24, 0, 30, tzinfo=UTC),
+    ]
+    minute_rows = _minutes(symbol, *utc_values).with_columns(pl.Series("datetime", utc_values))
+    provider = StubStrictProvider(quotes=[], minute_rows=minute_rows)
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [symbol],
+        end,
+    )
+
+    assert provider.calls == [("minute", [symbol], None, end)]
+    assert history.minute_rows.get_column("datetime").to_list() == [utc_values[0]]
+    assert history.coverage_by_symbol[symbol].latest_timestamp == datetime(
+        2026,
+        7,
+        23,
+        15,
+        59,
+    )
 
 
 def test_history_normalizes_symbols_and_reports_no_prior_session() -> None:
