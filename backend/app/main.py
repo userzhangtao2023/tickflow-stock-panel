@@ -1,6 +1,7 @@
 """FastAPI 入口。"""
 from __future__ import annotations
 
+from ipaddress import ip_address
 import logging
 import os
 import threading
@@ -359,11 +360,19 @@ _AUTH_WHITELIST_PREFIX = ("/api/auth/",)
 _AUTH_WHITELIST_EXACT = (
     "/health",
     "/api/health",
-    "/api/dow-monitor/status",
     "/openapi.json",
     "/docs",
     "/redoc",
 )
+_DOW_MONITOR_HEALTH_PATH = "/api/dow-monitor/status"
+
+
+def _is_loopback_peer(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @app.middleware("http")
@@ -371,6 +380,8 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     # 仅 /api/ 走认证; 静态资源(前端页面/assets)放行, 由前端处理跳转
     if not path.startswith("/api/"):
+        return await call_next(request)
+    if path == _DOW_MONITOR_HEALTH_PATH and _is_loopback_peer(request):
         return await call_next(request)
     # 白名单放行(设密码/登录/探活本身不拦)
     if path.startswith(_AUTH_WHITELIST_PREFIX) or path in _AUTH_WHITELIST_EXACT:

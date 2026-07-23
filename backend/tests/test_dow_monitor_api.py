@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from app.api import dow_monitor
 from app.services.dow_monitor_models import DowNotification, DowTimeframeState
@@ -184,10 +186,47 @@ def test_notifications_read_and_status_expose_persisted_timestamps(tmp_path) -> 
     assert status.json()["open_enabled_markets"] == []
 
 
-def test_health_status_is_available_to_local_patrol_without_browser_session() -> None:
+def test_health_status_is_available_only_to_loopback_patrol_without_browser_session(
+    monkeypatch,
+) -> None:
     from app import main
+    from app.services import auth
 
-    assert "/api/dow-monitor/status" in main._AUTH_WHITELIST_EXACT
+    monkeypatch.setattr(auth, "is_configured", lambda: True)
+
+    async def call_next(_request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    def request(peer: str, headers: list[tuple[bytes, bytes]] | None = None) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/dow-monitor/status",
+                "raw_path": b"/api/dow-monitor/status",
+                "query_string": b"",
+                "headers": headers or [],
+                "client": (peer, 50_000),
+                "server": ("tickflow", 3018),
+            }
+        )
+
+    ipv4 = asyncio.run(main.auth_middleware(request("127.0.0.1"), call_next))
+    ipv6 = asyncio.run(main.auth_middleware(request("::1"), call_next))
+    remote = asyncio.run(main.auth_middleware(request("192.168.10.99"), call_next))
+    spoofed = asyncio.run(
+        main.auth_middleware(
+            request("192.168.10.99", [(b"x-forwarded-for", b"127.0.0.1")]),
+            call_next,
+        )
+    )
+
+    assert ipv4.status_code == 200
+    assert ipv6.status_code == 200
+    assert remote.status_code == 401
+    assert spoofed.status_code == 401
 
 
 def test_notification_read_returns_exact_oldest_notification_beyond_list_limit(tmp_path) -> None:
