@@ -175,6 +175,82 @@ def test_current_bucket_is_forming_and_prior_buckets_are_completed() -> None:
     assert frame.all_bars == [*frame.completed, frame.forming]
 
 
+def test_as_of_excludes_future_minutes_and_future_daily_rows_after_timezone_conversion() -> None:
+    as_of = datetime(2026, 7, 23, 13, 35, tzinfo=UTC)
+    minute_rows = pl.DataFrame(
+        {
+            "symbol": ["INTC.US"] * 3,
+            "datetime": [
+                datetime(2026, 7, 23, 13, 30, tzinfo=UTC),
+                datetime(2026, 7, 23, 13, 34, tzinfo=UTC),
+                datetime(2026, 7, 23, 14, 30, tzinfo=UTC),
+            ],
+            "open": [100.0, 101.0, 999.0],
+            "high": [101.0, 102.0, 1_000.0],
+            "low": [99.0, 100.0, 998.0],
+            "close": [100.5, 101.5, 999.5],
+            "volume": [10.0, 10.0, 999.0],
+            "amount": [100.0, 100.0, 999.0],
+        }
+    )
+    daily_rows = pl.DataFrame(
+        {
+            "symbol": ["INTC.US"] * 3,
+            "date": [date(2026, 7, 22), date(2026, 7, 23), date(2026, 7, 24)],
+            "open": [90.0, 998.0, 999.0],
+            "high": [95.0, 998.0, 999.0],
+            "low": [89.0, 998.0, 999.0],
+            "close": [94.0, 998.0, 999.0],
+            "volume": [1_000.0, 998.0, 999.0],
+            "amount": [93_000.0, 998.0, 999.0],
+        }
+    )
+
+    frames = build_timeframes("INTC.US", minute_rows, daily_rows, as_of)
+
+    assert frames["5m"].completion == "FINAL"
+    assert frames["5m"].all_bars == [
+        {
+            "timestamp": "2026-07-23T09:30:00-04:00",
+            "open": 100.0,
+            "high": 102.0,
+            "low": 99.0,
+            "close": 101.5,
+            "volume": 20.0,
+            "amount": 200.0,
+        }
+    ]
+    assert [bar["timestamp"] for bar in frames["day"].completed] == ["2026-07-22"]
+    assert frames["day"].forming["timestamp"] == "2026-07-23"
+    assert frames["day"].forming["open"] == 100.0
+    assert frames["day"].forming["high"] == 102.0
+    assert frames["day"].forming["volume"] == 20.0
+    assert frames["day"].completion == "FORMING"
+    expected_source = datetime(2026, 7, 23, 9, 34, tzinfo=ZoneInfo("America/New_York"))
+    assert all(frame.source_timestamp == expected_source for frame in frames.values())
+    assert all(all(bar["open"] != 999.0 for bar in frame.all_bars) for frame in frames.values())
+
+
+def test_current_date_daily_snapshot_is_not_used_without_current_date_minutes() -> None:
+    as_of = datetime(2026, 7, 23, 9, 35, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+
+    day = build_timeframes(
+        "01347.HK",
+        _minute_rows(
+            "01347.HK",
+            "Asia/Hong_Kong",
+            [("2026-07-22T15:59:00", 94.0)],
+        ),
+        _daily_rows("01347.HK"),
+        as_of,
+    )["day"]
+
+    assert day.completion == "FINAL"
+    assert day.forming["timestamp"] == "2026-07-22"
+    assert day.forming["close"] == 94.0
+    assert day.all_bars == [day.forming]
+
+
 def test_last_bucket_is_final_once_its_session_capped_end_is_reached() -> None:
     rows = _minute_rows(
         "01347.HK",
@@ -347,6 +423,36 @@ def test_cn_and_hk_isolated_close_minute_merges_into_last_regular_bucket(
     assert frame.forming["open"] == 100.0
     assert frame.forming["close"] == 120.5
     assert frame.forming["volume"] == 20.0
+    assert frame.completion == "FINAL"
+
+
+@pytest.mark.parametrize(
+    ("symbol", "zone", "close_time", "timeframe"),
+    [
+        ("600519.SH", "Asia/Shanghai", "2026-07-23T15:00:00", "5m"),
+        ("600519.SH", "Asia/Shanghai", "2026-07-23T15:00:00", "60m"),
+        ("01347.HK", "Asia/Hong_Kong", "2026-07-23T16:00:00", "5m"),
+        ("01347.HK", "Asia/Hong_Kong", "2026-07-23T16:00:00", "60m"),
+    ],
+)
+def test_isolated_close_minute_cannot_create_a_bucket_without_regular_minutes(
+    symbol: str,
+    zone: str,
+    close_time: str,
+    timeframe: str,
+) -> None:
+    close = datetime.fromisoformat(close_time).replace(tzinfo=ZoneInfo(zone))
+
+    frame = build_timeframes(
+        symbol,
+        _minute_rows(symbol, zone, [(close_time, 120.0)]),
+        pl.DataFrame(),
+        close,
+    )[timeframe]
+
+    assert frame.completed == []
+    assert frame.forming == {}
+    assert frame.all_bars == []
     assert frame.completion == "FINAL"
 
 

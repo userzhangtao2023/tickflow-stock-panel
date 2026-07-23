@@ -91,24 +91,33 @@ def _regular_minutes(
     minute_rows: pl.DataFrame,
     zone: ZoneInfo,
     policy: MarketSessionPolicy,
+    now_local: datetime,
 ) -> list[tuple[datetime, tuple[time, time], dict]]:
     if minute_rows.is_empty():
         return []
 
     normalized_symbol = symbol.strip().upper()
     merge_close = market_for_symbol(normalized_symbol) in {"cn", "hk"}
-    rows: list[tuple[datetime, tuple[time, time], dict]] = []
+    candidates: list[tuple[datetime, tuple[time, time], dict]] = []
     for row in minute_rows.to_dicts():
         row_symbol = str(row.get("symbol") or normalized_symbol).strip().upper()
         if row_symbol != normalized_symbol or row.get("datetime") is None:
             continue
         local_dt = _local_datetime(row["datetime"], zone)
-        if local_dt.weekday() >= 5:
+        if local_dt > now_local or local_dt.weekday() >= 5:
             continue
         segment = _session_segment(local_dt, policy, merge_close=merge_close)
         if segment is not None:
-            rows.append((local_dt, segment, row))
-    return sorted(rows, key=lambda item: item[0])
+            candidates.append((local_dt, segment, row))
+
+    ordered = sorted(candidates, key=lambda item: item[0])
+    observed = {local_dt for local_dt, _, _ in ordered}
+    return [
+        item
+        for item in ordered
+        if item[0].time().replace(tzinfo=None) != item[1][1]
+        or item[0] - timedelta(minutes=1) in observed
+    ]
 
 
 def _aggregate_minutes(
@@ -136,6 +145,8 @@ def _aggregate_minutes(
         end = min(start + timedelta(minutes=minutes), session_end_dt)
         key = (start, end)
         bucket = buckets.get(key)
+        if local_dt == session_end_dt and bucket is None:
+            continue
         if bucket is None:
             buckets[key] = _Bucket(
                 start=start,
@@ -211,7 +222,11 @@ def _build_daily(
         for row in daily_rows.to_dicts():
             row_symbol = str(row.get("symbol") or normalized_symbol).strip().upper()
             row_date = _daily_date(row, now_local.tzinfo)
-            if row_symbol == normalized_symbol and row_date is not None:
+            if (
+                row_symbol == normalized_symbol
+                and row_date is not None
+                and row_date < now_local.date()
+            ):
                 by_date[row_date] = _daily_bar(row_date, row)
 
     today_rows = [item for item in regular_rows if item[0].date() == now_local.date()]
@@ -284,7 +299,7 @@ def build_timeframes(
     policy = market_session_policy(symbol)
     zone = ZoneInfo(policy.timezone)
     now_local = now.astimezone(zone)
-    regular_rows = _regular_minutes(symbol, minute_rows, zone, policy)
+    regular_rows = _regular_minutes(symbol, minute_rows, zone, policy, now_local)
     source_timestamp = max(
         (local_dt for local_dt, _, _ in regular_rows),
         default=None,
