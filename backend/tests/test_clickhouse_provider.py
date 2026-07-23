@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 from app.plugins.clickhouse import provider as provider_module
 from app.plugins.clickhouse.provider import ClickHouseProvider
@@ -382,7 +383,8 @@ def test_strict_realtime_uses_only_clickhouse_query(monkeypatch) -> None:
     rows = provider.get_realtime_strict(["01347.HK"])
 
     assert [row["symbol"] for row in rows] == ["01347.HK"]
-    assert "AND symbol IN ('01347.HK')" in query.queries[-1]
+    assert "symbol IN ('01347.HK')" in query.queries[-1]
+    assert "toStartOfDay(now('Asia/Shanghai'))" not in query.queries[-1]
 
 
 def test_strict_realtime_empty_monitor_list_does_not_query_all_symbols() -> None:
@@ -391,6 +393,43 @@ def test_strict_realtime_empty_monitor_list_does_not_query_all_symbols() -> None
 
     assert provider.get_realtime_strict([]) == []
     assert query.queries == []
+
+
+def test_strict_realtime_keeps_fresh_us_quote_across_shanghai_midnight() -> None:
+    row = {
+        "symbol": "AAPL.US",
+        "market": "us",
+        "snapshot_minute": "2026-07-23 23:59:00",
+        "last_done": 215,
+        "prev_close": 210,
+        "open": 211,
+        "high": 216,
+        "low": 209,
+        "change_value": 5,
+        "change_percentage": 2.3809,
+        "volume": 100,
+        "turnover": 21500,
+    }
+    queries: list[str] = []
+
+    def query(sql: str) -> list[dict]:
+        queries.append(sql)
+        return [] if "toStartOfDay(now('Asia/Shanghai'))" in sql else [row]
+
+    provider = ClickHouseProvider(query_fn=query)
+
+    strict_rows = provider.get_realtime_strict(["AAPL.US"])
+    legacy_rows = provider.get_realtime(symbols=["AAPL.US"])
+
+    expected = datetime(2026, 7, 23, 15, 59, tzinfo=UTC)
+    shanghai_now = datetime(2026, 7, 24, 0, 0, 20, tzinfo=ZoneInfo("Asia/Shanghai"))
+    strict_quote_time = datetime.fromtimestamp(strict_rows[0]["timestamp"] / 1000, tz=UTC)
+    assert strict_rows[0]["timestamp"] == int(expected.timestamp() * 1000)
+    assert shanghai_now.astimezone(UTC) - strict_quote_time == timedelta(seconds=80)
+    assert "toStartOfDay(now('Asia/Shanghai'))" not in queries[0]
+    assert "WHERE symbol IN ('AAPL.US')" in queries[0]
+    assert legacy_rows == []
+    assert "toStartOfDay(now('Asia/Shanghai'))" in queries[1]
 
 
 def test_instruments_cover_all_three_markets() -> None:

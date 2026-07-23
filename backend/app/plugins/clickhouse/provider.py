@@ -419,6 +419,17 @@ class ClickHouseProvider:
         """
         return self._query(sql)
 
+    def _query_realtime_rows_strict(self, symbols: list[str]) -> list[dict]:
+        sql = f"""
+            SELECT symbol, market, snapshot_minute, last_done, prev_close,
+                   open, high, low, change_value, change_percentage, volume, turnover
+            FROM {self._table("lb_realtime_quotes")}
+            WHERE symbol IN {_symbols_sql(symbols)}
+            ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
+            LIMIT 1 BY symbol
+        """
+        return self._query(sql)
+
     @staticmethod
     def _normalize_realtime_query_rows(rows: list[dict]) -> list[dict]:
         records: list[dict] = []
@@ -449,7 +460,7 @@ class ClickHouseProvider:
     def get_realtime_strict(self, symbols: list[str]) -> list[dict]:
         if not symbols:
             return []
-        return self._normalize_realtime_query_rows(self._query_realtime_rows(symbols))
+        return self._normalize_realtime_query_rows(self._query_realtime_rows_strict(symbols))
 
     def get_realtime(
         self,

@@ -121,15 +121,20 @@ def _is_regular_session(now_local: datetime, policy: MarketSessionPolicy) -> boo
     return any(start <= local_time < end for start, end in policy.sessions)
 
 
-def _expected_between(symbol: str, start: datetime, end: datetime) -> set[datetime]:
+def _expected_between(
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    observed_dates: set[date],
+) -> set[datetime]:
     if end < start:
         return set()
-    cursor = start.date()
-    result: set[datetime] = set()
-    while cursor <= end.date():
-        result.update(value for value in expected_minutes(symbol, cursor) if start <= value <= end)
-        cursor += timedelta(days=1)
-    return result
+    return {
+        value
+        for observed_date in observed_dates
+        for value in expected_minutes(symbol, observed_date)
+        if start <= value <= end
+    }
 
 
 class WebStockMonitorGateway:
@@ -147,11 +152,27 @@ class WebStockMonitorGateway:
         start: datetime,
         end: datetime,
     ) -> WebStockBatch:
-        normalized_symbols = [str(symbol).strip().upper() for symbol in symbols]
+        normalized_symbols = list(
+            dict.fromkeys(
+                normalized for symbol in symbols if (normalized := str(symbol).strip().upper())
+            )
+        )
+        if not normalized_symbols:
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=pl.DataFrame(),
+                source_timestamp=None,
+                freshness_by_symbol={},
+                gap_details={},
+            )
+
+        now = self._now_fn()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now_fn must return a timezone-aware datetime")
+
         quotes = self._provider.get_realtime_strict(normalized_symbols)
         minute_rows = self._provider.get_minute_strict(normalized_symbols, start, end)
-        now = self._now_fn()
-        now_utc = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+        now_utc = now.astimezone(UTC)
         rows = minute_rows.to_dicts() if not minute_rows.is_empty() else []
         quote_by_symbol = self._latest_quotes(quotes)
 
@@ -167,15 +188,22 @@ class WebStockMonitorGateway:
             now_local = _as_market_local(now, zone)
             start_local = _as_market_local(start, zone)
             end_local = min(_as_market_local(end, zone), now_local)
-            expected = _expected_between(symbol, start_local, end_local)
 
-            received = {
+            observed = {
                 local_time
                 for row in rows
                 if str(row.get("symbol") or "").upper() == symbol
                 and (local_time := _minute_local(row.get("datetime"), zone)) is not None
-                and local_time in expected
+                and start_local <= local_time <= end_local
+                and local_time in expected_minutes(symbol, local_time.date())
             }
+            expected = _expected_between(
+                symbol,
+                start_local,
+                end_local,
+                {local_time.date() for local_time in observed},
+            )
+            received = observed & expected
             latest_minute = max(received, default=None)
             gaps = (
                 sorted(

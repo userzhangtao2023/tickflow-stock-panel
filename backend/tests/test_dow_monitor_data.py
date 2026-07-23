@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import polars as pl
+import pytest
 
 from app.services.dow_monitor_data import (
     WebStockMonitorGateway,
@@ -244,6 +245,137 @@ def test_future_regular_minutes_are_not_expected_or_reported_as_gaps() -> None:
         ["01347.HK"],
         datetime(2026, 7, 23, 10, 0, tzinfo=HK),
         datetime(2026, 7, 23, 10, 5, tzinfo=HK),
+    )
+
+    assert batch.freshness_by_symbol["01347.HK"].state == "LIVE"
+    assert batch.gap_details["01347.HK"] == []
+
+
+def test_gateway_rejects_naive_now_before_accessing_provider() -> None:
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+    gateway = WebStockMonitorGateway(
+        provider,
+        now_fn=lambda: datetime(2026, 7, 23, 10, 0),
+    )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        gateway.fetch(
+            ["01347.HK"],
+            datetime(2026, 7, 23, 9, 30, tzinfo=HK),
+            datetime(2026, 7, 23, 10, 0, tzinfo=HK),
+        )
+
+    assert provider.calls == []
+
+
+def test_gateway_normalizes_and_deduplicates_nonempty_symbols() -> None:
+    now = datetime(2026, 7, 26, 10, 0, tzinfo=UTC)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now).fetch(
+        [" 01347.hk ", "", "01347.HK", " intc.us ", "  "],
+        now,
+        now,
+    )
+
+    assert provider.calls == [
+        ("realtime", ["01347.HK", "INTC.US"]),
+        ("minute", ["01347.HK", "INTC.US"], now, now),
+    ]
+    assert list(batch.freshness_by_symbol) == ["01347.HK", "INTC.US"]
+
+
+def test_gateway_empty_symbols_do_not_access_provider() -> None:
+    now = datetime(2026, 7, 23, 10, 0, tzinfo=UTC)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now).fetch(
+        ["", "  "],
+        now,
+        now,
+    )
+
+    assert provider.calls == []
+    assert batch.quotes == []
+    assert batch.minute_rows.is_empty()
+    assert batch.source_timestamp is None
+    assert batch.freshness_by_symbol == {}
+    assert batch.gap_details == {}
+
+
+@pytest.mark.parametrize(
+    ("now", "expected_state"),
+    [
+        (datetime(2026, 7, 23, 9, 29, 59, tzinfo=ZoneInfo("Asia/Shanghai")), "LIVE"),
+        (datetime(2026, 7, 23, 9, 30, tzinfo=ZoneInfo("Asia/Shanghai")), "STALE_DATA"),
+        (datetime(2026, 7, 23, 11, 29, 59, tzinfo=ZoneInfo("Asia/Shanghai")), "STALE_DATA"),
+        (datetime(2026, 7, 23, 11, 30, tzinfo=ZoneInfo("Asia/Shanghai")), "LIVE"),
+        (datetime(2026, 7, 23, 12, 59, 59, tzinfo=ZoneInfo("Asia/Shanghai")), "LIVE"),
+        (datetime(2026, 7, 23, 13, 0, tzinfo=ZoneInfo("Asia/Shanghai")), "STALE_DATA"),
+        (datetime(2026, 7, 23, 14, 59, 59, tzinfo=ZoneInfo("Asia/Shanghai")), "STALE_DATA"),
+        (datetime(2026, 7, 23, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")), "LIVE"),
+    ],
+)
+def test_cn_open_close_and_lunch_boundaries(
+    now: datetime,
+    expected_state: str,
+) -> None:
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now).fetch(
+        ["600519.SH"],
+        now,
+        now,
+    )
+
+    assert batch.freshness_by_symbol["600519.SH"].state == expected_state
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "expected_state"),
+    [
+        (datetime(2026, 7, 23, 13, 29, 59, tzinfo=UTC), "LIVE"),
+        (datetime(2026, 7, 23, 13, 30, tzinfo=UTC), "STALE_DATA"),
+        (datetime(2026, 7, 23, 19, 59, 59, tzinfo=UTC), "STALE_DATA"),
+        (datetime(2026, 7, 23, 20, 0, tzinfo=UTC), "LIVE"),
+        (datetime(2026, 1, 22, 14, 29, 59, tzinfo=UTC), "LIVE"),
+        (datetime(2026, 1, 22, 14, 30, tzinfo=UTC), "STALE_DATA"),
+        (datetime(2026, 1, 22, 20, 59, 59, tzinfo=UTC), "STALE_DATA"),
+        (datetime(2026, 1, 22, 21, 0, tzinfo=UTC), "LIVE"),
+    ],
+)
+def test_us_open_close_respects_daylight_saving_time(
+    now_utc: datetime,
+    expected_state: str,
+) -> None:
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now_utc).fetch(
+        ["INTC.US"],
+        now_utc,
+        now_utc,
+    )
+
+    assert batch.freshness_by_symbol["INTC.US"].state == expected_state
+
+
+def test_cross_weekday_blank_date_is_not_assumed_to_be_a_trading_day() -> None:
+    now = datetime(2026, 7, 22, 9, 32, 30, tzinfo=HK)
+    provider = StubStrictProvider(
+        quotes=[_quote("01347.HK", now)],
+        minute_rows=_minutes(
+            "01347.HK",
+            datetime(2026, 7, 20, 15, 59, tzinfo=HK),
+            datetime(2026, 7, 22, 9, 30, tzinfo=HK),
+            datetime(2026, 7, 22, 9, 31, tzinfo=HK),
+            datetime(2026, 7, 22, 9, 32, tzinfo=HK),
+        ),
+    )
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now).fetch(
+        ["01347.HK"],
+        datetime(2026, 7, 20, 15, 59, tzinfo=HK),
+        now,
     )
 
     assert batch.freshness_by_symbol["01347.HK"].state == "LIVE"
