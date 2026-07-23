@@ -316,7 +316,7 @@ class ClickHouseProvider:
                        price AS open, price AS high, price AS low, price AS close,
                        volume, turnover AS amount, 1 AS source_priority
                 FROM {self._table("lb_intraday_lines")}
-                WHERE symbol IN {_symbols_sql(symbols)}
+                WHERE symbol IN {_symbols_sql(list(symbol_aliases))}
                   {_date_filter("line_time", query_start, query_end)}
             )
             ORDER BY symbol, bar_time_utc

@@ -431,7 +431,7 @@ def test_strict_minute_maps_unpadded_webstock_hk_symbol_to_requested_symbol() ->
     )
 
     assert frame.get_column("symbol").to_list() == ["01347.HK"]
-    assert "symbol IN ('01347.HK', '1347.HK')" in query.queries[-1]
+    assert query.queries[-1].count("symbol IN ('01347.HK', '1347.HK')") == 2
 
 
 def test_strict_realtime_uses_only_clickhouse_query(monkeypatch) -> None:
