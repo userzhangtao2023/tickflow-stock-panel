@@ -722,6 +722,65 @@ async def test_restart_after_notification_write_does_not_emit_next_sequence(tmp_
 
 
 @pytest.mark.asyncio
+async def test_restart_after_first_notification_write_before_any_state_does_not_emit_sequence_two(
+    tmp_path,
+) -> None:
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    class CrashAfterFirstNotificationStore(DowMonitorStore):
+        crashed = False
+
+        def save_state(self, state):
+            notification_written = any(
+                item.timeframe == "30m" for item in self.list_notifications(limit=100)
+            )
+            if state.timeframe == "30m" and notification_written and not self.crashed:
+                self.crashed = True
+                raise SimulatedProcessCrash
+            return super().save_state(state)
+
+    crashing_store = CrashAfterFirstNotificationStore(tmp_path)
+    crashing_store.upsert_symbol("01347.HK", "hk", True)
+    client = FakeClient(action_code="OPEN_LONG", line_id="LINE-1")
+    crashing_service = DowMonitorService(
+        crashing_store,
+        FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        await crashing_service.run_once()
+
+    persisted_after_crash = DowMonitorStore(tmp_path)
+    assert persisted_after_crash.get_state("01347.HK", "30m") is None
+    first_keys = [
+        item.event_key
+        for item in persisted_after_crash.list_notifications()
+        if item.timeframe == "30m"
+    ]
+    assert first_keys == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
+
+    restarted = DowMonitorService(
+        persisted_after_crash,
+        FakeGateway(_batch("01347.HK")),
+        FakeClient(action_code="OPEN_LONG", line_id="LINE-1"),
+        _daily_rows,
+        now_fn=lambda: NOW + timedelta(minutes=1),
+    )
+    await restarted.run_once()
+
+    keys_after_restart = [
+        item.event_key
+        for item in persisted_after_crash.list_notifications()
+        if item.timeframe == "30m"
+    ]
+    assert keys_after_restart == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
+
+
+@pytest.mark.asyncio
 async def test_new_symbol_forces_full_history_cold_start_in_shared_batch(tmp_path) -> None:
     service, store, gateway, _ = _service(
         tmp_path,

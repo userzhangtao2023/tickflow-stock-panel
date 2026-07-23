@@ -471,7 +471,14 @@ class DowMonitorService:
     ) -> ActivationState | None:
         sequence = self._maximum_sequence(symbol, timeframe, notification_index)
         if state is None:
-            return ActivationState(False, None, None, sequence) if sequence else None
+            recorded = self._recorded_activation_after_state(
+                symbol,
+                timeframe,
+                None,
+                current,
+                notification_index,
+            )
+            return recorded or (ActivationState(False, None, None, sequence) if sequence else None)
         family = signal_family(str(state.snapshot.get("action_code") or ""))
         structure_id = state.snapshot.get("line_id")
         active = family is not None and isinstance(structure_id, str) and bool(structure_id)
@@ -496,7 +503,7 @@ class DowMonitorService:
         self,
         symbol: str,
         timeframe: str,
-        state: DowTimeframeState,
+        state: DowTimeframeState | None,
         current: DowSnapshot,
         notification_index: NotificationIndex,
     ) -> ActivationState | None:
@@ -517,11 +524,12 @@ class DowMonitorService:
                     notification_family = signal_family(str(snapshot.get("action_code") or ""))
                     notification_structure = snapshot.get("line_id")
             notification_source = self._notification_source_timestamp(notification)
-            notification_follows_state = (
-                notification_source >= state.source_timestamp
-                if notification_source is not None and state.source_timestamp is not None
-                else notification.triggered_at >= state.updated_at
-            )
+            if state is None:
+                notification_follows_state = True
+            elif notification_source is not None and state.source_timestamp is not None:
+                notification_follows_state = notification_source >= state.source_timestamp
+            else:
+                notification_follows_state = notification.triggered_at >= state.updated_at
             if (
                 notification_family != family
                 or notification_structure != structure_id
