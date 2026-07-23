@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, Protocol
@@ -15,6 +15,11 @@ MINUTE_MAX_AGE = timedelta(seconds=120)
 
 FreshnessState = Literal["LIVE", "STALE_DATA"]
 FreshnessReason = Literal["QUOTE_TOO_OLD", "MINUTE_TOO_OLD", "SESSION_GAP"]
+HistoryState = Literal["COMPLETE", "INCOMPLETE"]
+HistoryIncompleteReason = Literal[
+    "NO_PRIOR_SESSION",
+    "LATEST_PRIOR_SESSION_INCOMPLETE",
+]
 
 
 @dataclass(frozen=True)
@@ -38,13 +43,29 @@ class WebStockBatch:
     gap_details: dict[str, list[datetime]]
 
 
+@dataclass(frozen=True)
+class WebStockHistoryCoverage:
+    earliest_timestamp: datetime | None
+    latest_timestamp: datetime | None
+    latest_prior_session_date: date | None
+    latest_prior_session_complete: bool
+    state: HistoryState
+    reason: HistoryIncompleteReason | None
+
+
+@dataclass(frozen=True)
+class WebStockHistory:
+    minute_rows: pl.DataFrame
+    coverage_by_symbol: dict[str, WebStockHistoryCoverage]
+
+
 class StrictWebStockProvider(Protocol):
     def get_realtime_strict(self, symbols: list[str]) -> list[dict]: ...
 
     def get_minute_strict(
         self,
         symbols: list[str],
-        start_time: datetime,
+        start_time: datetime | None,
         end_time: datetime,
     ) -> pl.DataFrame: ...
 
@@ -105,6 +126,19 @@ def _as_market_local(value: datetime, zone: ZoneInfo) -> datetime:
     return value.astimezone(zone).replace(tzinfo=None)
 
 
+def _require_aware(value: datetime, name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name} must be a timezone-aware datetime")
+
+
+def _normalize_symbols(symbols: list[str]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            normalized for symbol in symbols if (normalized := str(symbol).strip().upper())
+        )
+    )
+
+
 def _minute_local(value: object, zone: ZoneInfo) -> datetime | None:
     if value is None:
         return None
@@ -152,26 +186,113 @@ class WebStockMonitorGateway:
         start: datetime,
         end: datetime,
     ) -> WebStockBatch:
-        normalized_symbols = list(
-            dict.fromkeys(
-                normalized for symbol in symbols if (normalized := str(symbol).strip().upper())
-            )
-        )
+        normalized_symbols = _normalize_symbols(symbols)
         if not normalized_symbols:
-            return WebStockBatch(
-                quotes=[],
-                minute_rows=pl.DataFrame(),
-                source_timestamp=None,
-                freshness_by_symbol={},
-                gap_details={},
+            return self._empty_batch()
+
+        now = self._current_now()
+        return self._fetch_batch(
+            normalized_symbols,
+            dict.fromkeys(normalized_symbols, start),
+            start,
+            end,
+            now,
+        )
+
+    def fetch_since(
+        self,
+        starts_by_symbol: Mapping[str, datetime],
+        end: datetime,
+    ) -> WebStockBatch:
+        _require_aware(end, "end")
+        normalized_starts: dict[str, datetime] = {}
+        for raw_symbol, start in starts_by_symbol.items():
+            _require_aware(start, f"start for {raw_symbol!r}")
+            symbol = str(raw_symbol).strip().upper()
+            if not symbol:
+                continue
+            previous = normalized_starts.get(symbol)
+            if previous is None or start < previous:
+                normalized_starts[symbol] = start
+        if not normalized_starts:
+            return self._empty_batch()
+
+        now = self._current_now()
+        symbols = list(normalized_starts)
+        return self._fetch_batch(
+            symbols,
+            normalized_starts,
+            min(normalized_starts.values()),
+            end,
+            now,
+        )
+
+    def load_history(
+        self,
+        symbols: list[str],
+        end: datetime,
+    ) -> WebStockHistory:
+        _require_aware(end, "end")
+        normalized_symbols = _normalize_symbols(symbols)
+        if not normalized_symbols:
+            return WebStockHistory(minute_rows=pl.DataFrame(), coverage_by_symbol={})
+
+        minute_rows = self._provider.get_minute_strict(normalized_symbols, None, end)
+        rows = minute_rows.to_dicts() if not minute_rows.is_empty() else []
+        coverage_by_symbol: dict[str, WebStockHistoryCoverage] = {}
+        for symbol in normalized_symbols:
+            policy = market_session_policy(symbol)
+            zone = ZoneInfo(policy.timezone)
+            local_times = [
+                local_time
+                for row in rows
+                if str(row.get("symbol") or "").upper() == symbol
+                and (local_time := _minute_local(row.get("datetime"), zone)) is not None
+            ]
+            end_local_date = _as_market_local(end, zone).date()
+            prior_session_times = {
+                local_time
+                for local_time in local_times
+                if local_time.date() < end_local_date
+                and local_time in expected_minutes(symbol, local_time.date())
+            }
+            latest_prior_date = max(
+                (local_time.date() for local_time in prior_session_times),
+                default=None,
             )
+            complete = False
+            reason: HistoryIncompleteReason | None = "NO_PRIOR_SESSION"
+            if latest_prior_date is not None:
+                observed = {
+                    local_time
+                    for local_time in prior_session_times
+                    if local_time.date() == latest_prior_date
+                }
+                complete = expected_minutes(symbol, latest_prior_date).issubset(observed)
+                reason = None if complete else "LATEST_PRIOR_SESSION_INCOMPLETE"
+            coverage_by_symbol[symbol] = WebStockHistoryCoverage(
+                earliest_timestamp=min(local_times, default=None),
+                latest_timestamp=max(local_times, default=None),
+                latest_prior_session_date=latest_prior_date,
+                latest_prior_session_complete=complete,
+                state="COMPLETE" if complete else "INCOMPLETE",
+                reason=reason,
+            )
+        return WebStockHistory(
+            minute_rows=minute_rows,
+            coverage_by_symbol=coverage_by_symbol,
+        )
 
-        now = self._now_fn()
-        if now.tzinfo is None or now.utcoffset() is None:
-            raise ValueError("now_fn must return a timezone-aware datetime")
-
+    def _fetch_batch(
+        self,
+        normalized_symbols: list[str],
+        starts_by_symbol: Mapping[str, datetime],
+        query_start: datetime,
+        end: datetime,
+        now: datetime,
+    ) -> WebStockBatch:
         quotes = self._provider.get_realtime_strict(normalized_symbols)
-        minute_rows = self._provider.get_minute_strict(normalized_symbols, start, end)
+        minute_rows = self._provider.get_minute_strict(normalized_symbols, query_start, end)
         now_utc = now.astimezone(UTC)
         rows = minute_rows.to_dicts() if not minute_rows.is_empty() else []
         quote_by_symbol = self._latest_quotes(quotes)
@@ -186,7 +307,7 @@ class WebStockMonitorGateway:
             policy = market_session_policy(symbol)
             zone = ZoneInfo(policy.timezone)
             now_local = _as_market_local(now, zone)
-            start_local = _as_market_local(start, zone)
+            start_local = _as_market_local(starts_by_symbol[symbol], zone)
             end_local = min(_as_market_local(end, zone), now_local)
 
             observed = {
@@ -241,6 +362,21 @@ class WebStockMonitorGateway:
             source_timestamp=max(source_times, default=None),
             freshness_by_symbol=freshness_by_symbol,
             gap_details=gap_details,
+        )
+
+    def _current_now(self) -> datetime:
+        now = self._now_fn()
+        _require_aware(now, "now_fn result")
+        return now
+
+    @staticmethod
+    def _empty_batch() -> WebStockBatch:
+        return WebStockBatch(
+            quotes=[],
+            minute_rows=pl.DataFrame(),
+            source_timestamp=None,
+            freshness_by_symbol={},
+            gap_details={},
         )
 
     @staticmethod

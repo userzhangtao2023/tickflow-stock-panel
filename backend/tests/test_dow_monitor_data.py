@@ -380,3 +380,221 @@ def test_cross_weekday_blank_date_is_not_assumed_to_be_a_trading_day() -> None:
 
     assert batch.freshness_by_symbol["01347.HK"].state == "LIVE"
     assert batch.gap_details["01347.HK"] == []
+
+
+def test_fetch_since_uses_one_query_but_independent_symbol_windows() -> None:
+    now = datetime(2026, 7, 23, 10, 2, 30, tzinfo=HK)
+    hot_symbol = "01347.HK"
+    cold_symbol = "00700.HK"
+    rows = pl.concat(
+        [
+            _minutes(
+                hot_symbol,
+                datetime(2026, 7, 23, 9, 58, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 0, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 1, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 2, tzinfo=HK),
+            ),
+            _minutes(
+                cold_symbol,
+                datetime(2026, 7, 23, 9, 58, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 0, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 1, tzinfo=HK),
+                datetime(2026, 7, 23, 10, 2, tzinfo=HK),
+            ),
+        ]
+    )
+    provider = StubStrictProvider(
+        quotes=[_quote(hot_symbol, now), _quote(cold_symbol, now)],
+        minute_rows=rows,
+    )
+    hot_start = datetime(2026, 7, 23, 10, 0, tzinfo=HK)
+    cold_start = datetime(2026, 7, 23, 9, 58, tzinfo=HK)
+
+    batch = WebStockMonitorGateway(provider, now_fn=lambda: now).fetch_since(
+        {
+            " 01347.hk ": hot_start + timedelta(minutes=1),
+            hot_symbol: hot_start,
+            cold_symbol: cold_start,
+        },
+        now,
+    )
+
+    assert provider.calls == [
+        ("realtime", [hot_symbol, cold_symbol]),
+        ("minute", [hot_symbol, cold_symbol], cold_start, now),
+    ]
+    assert batch.freshness_by_symbol[hot_symbol].state == "LIVE"
+    assert batch.gap_details[hot_symbol] == []
+    assert batch.freshness_by_symbol[cold_symbol].reason == "SESSION_GAP"
+    assert batch.gap_details[cold_symbol] == [datetime(2026, 7, 23, 9, 59)]
+
+
+def test_fresh_fetch_window_is_not_coupled_to_incomplete_prior_history() -> None:
+    symbol = "01347.HK"
+    now = datetime(2026, 7, 23, 10, 2, 30, tzinfo=HK)
+    current_start = datetime(2026, 7, 23, 10, 0, tzinfo=HK)
+    rows = _minutes(
+        symbol,
+        datetime(2026, 7, 22, 9, 30, tzinfo=HK),
+        datetime(2026, 7, 22, 9, 32, tzinfo=HK),
+        datetime(2026, 7, 23, 10, 0, tzinfo=HK),
+        datetime(2026, 7, 23, 10, 1, tzinfo=HK),
+        datetime(2026, 7, 23, 10, 2, tzinfo=HK),
+    )
+    provider = StubStrictProvider(
+        quotes=[_quote(symbol, now)],
+        minute_rows=rows,
+    )
+    gateway = WebStockMonitorGateway(provider, now_fn=lambda: now)
+
+    batch = gateway.fetch_since({symbol: current_start}, now)
+    history = gateway.load_history([symbol], now)
+
+    assert batch.freshness_by_symbol[symbol].state == "LIVE"
+    assert batch.gap_details[symbol] == []
+    coverage = history.coverage_by_symbol[symbol]
+    assert coverage.latest_prior_session_date == datetime(2026, 7, 22).date()
+    assert coverage.latest_prior_session_complete is False
+    assert coverage.state == "INCOMPLETE"
+    assert coverage.reason == "LATEST_PRIOR_SESSION_INCOMPLETE"
+    assert history.minute_rows.height == rows.height
+    assert provider.calls == [
+        ("realtime", [symbol]),
+        ("minute", [symbol], current_start, now),
+        ("minute", [symbol], None, now),
+    ]
+
+
+def test_cn_history_finds_complete_latest_session_before_long_holiday() -> None:
+    symbol = "600519.SH"
+    zone = ZoneInfo("Asia/Shanghai")
+    session_date = datetime(2026, 9, 30).date()
+    end = datetime(2026, 10, 9, 10, 0, tzinfo=zone)
+    values = [
+        value.replace(tzinfo=zone) for value in sorted(expected_minutes(symbol, session_date))
+    ]
+    values.append(datetime(2026, 9, 30, 15, 0, tzinfo=zone))
+    provider = StubStrictProvider(quotes=[], minute_rows=_minutes(symbol, *values))
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [symbol],
+        end,
+    )
+
+    coverage = history.coverage_by_symbol[symbol]
+    assert coverage.earliest_timestamp == datetime(2026, 9, 30, 9, 30)
+    assert coverage.latest_timestamp == datetime(2026, 9, 30, 15, 0)
+    assert coverage.latest_prior_session_date == session_date
+    assert coverage.latest_prior_session_complete is True
+    assert coverage.state == "COMPLETE"
+    assert coverage.reason is None
+    assert provider.calls == [("minute", [symbol], None, end)]
+
+
+def test_hk_history_completeness_respects_lunch_and_ignores_close_rows() -> None:
+    symbol = "01347.HK"
+    session_date = datetime(2026, 7, 22).date()
+    end = datetime(2026, 7, 23, 9, 0, tzinfo=HK)
+    values = [value.replace(tzinfo=HK) for value in sorted(expected_minutes(symbol, session_date))]
+    values.extend(
+        [
+            datetime(2026, 7, 22, 12, 0, tzinfo=HK),
+            datetime(2026, 7, 22, 16, 0, tzinfo=HK),
+        ]
+    )
+    provider = StubStrictProvider(quotes=[], minute_rows=_minutes(symbol, *values))
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [symbol],
+        end,
+    )
+
+    coverage = history.coverage_by_symbol[symbol]
+    assert coverage.latest_prior_session_date == session_date
+    assert coverage.latest_prior_session_complete is True
+    assert coverage.state == "COMPLETE"
+
+
+def test_us_history_completeness_uses_dst_market_local_session() -> None:
+    symbol = "INTC.US"
+    utc_values = [
+        datetime(2026, 3, 9, 13, 30, tzinfo=UTC) + timedelta(minutes=offset)
+        for offset in range(390)
+    ]
+    minute_rows = _minutes(symbol, *utc_values).with_columns(pl.Series("datetime", utc_values))
+    end = datetime(2026, 3, 10, 13, 0, tzinfo=UTC)
+    provider = StubStrictProvider(quotes=[], minute_rows=minute_rows)
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [symbol],
+        end,
+    )
+
+    coverage = history.coverage_by_symbol[symbol]
+    assert coverage.earliest_timestamp == datetime(2026, 3, 9, 9, 30)
+    assert coverage.latest_timestamp == datetime(2026, 3, 9, 15, 59)
+    assert coverage.latest_prior_session_date == datetime(2026, 3, 9).date()
+    assert coverage.latest_prior_session_complete is True
+
+
+def test_history_normalizes_symbols_and_reports_no_prior_session() -> None:
+    end = datetime(2026, 7, 23, 10, 0, tzinfo=UTC)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+
+    history = WebStockMonitorGateway(provider, now_fn=lambda: end).load_history(
+        [" aapl.us ", "AAPL.US", ""],
+        end,
+    )
+
+    assert provider.calls == [("minute", ["AAPL.US"], None, end)]
+    coverage = history.coverage_by_symbol["AAPL.US"]
+    assert coverage.earliest_timestamp is None
+    assert coverage.latest_timestamp is None
+    assert coverage.latest_prior_session_date is None
+    assert coverage.latest_prior_session_complete is False
+    assert coverage.state == "INCOMPLETE"
+    assert coverage.reason == "NO_PRIOR_SESSION"
+
+
+def test_history_and_fetch_since_empty_inputs_do_not_access_provider() -> None:
+    end = datetime(2026, 7, 23, 10, 0, tzinfo=UTC)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+    gateway = WebStockMonitorGateway(provider, now_fn=lambda: end)
+
+    history = gateway.load_history(["", "  "], end)
+    batch = gateway.fetch_since({}, end)
+
+    assert history.minute_rows.is_empty()
+    assert history.coverage_by_symbol == {}
+    assert batch.minute_rows.is_empty()
+    assert batch.freshness_by_symbol == {}
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda gateway: gateway.fetch_since(
+            {"01347.HK": datetime(2026, 7, 23, 9, 30)},
+            datetime(2026, 7, 23, 10, 0, tzinfo=HK),
+        ),
+        lambda gateway: gateway.fetch_since(
+            {"01347.HK": datetime(2026, 7, 23, 9, 30, tzinfo=HK)},
+            datetime(2026, 7, 23, 10, 0),
+        ),
+        lambda gateway: gateway.load_history(
+            ["01347.HK"],
+            datetime(2026, 7, 23, 10, 0),
+        ),
+    ],
+)
+def test_history_capabilities_reject_naive_bounds_before_provider_access(operation) -> None:
+    aware_now = datetime(2026, 7, 23, 10, 0, tzinfo=HK)
+    provider = StubStrictProvider(quotes=[], minute_rows=pl.DataFrame())
+    gateway = WebStockMonitorGateway(provider, now_fn=lambda: aware_now)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        operation(gateway)
+
+    assert provider.calls == []
