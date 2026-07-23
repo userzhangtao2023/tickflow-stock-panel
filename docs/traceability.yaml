@@ -1,5 +1,111 @@
 version: 1
 requirements:
+  - id: REQ-DOW-WATCH-UI-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - frontend/src/pages/DowMonitor.tsx
+      - frontend/src/components/dow-monitor/DowMonitorCard.tsx
+      - frontend/src/components/dow-monitor/DowMiniChart.tsx
+    tests: {path: frontend/src/pages/DowMonitor.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-DETAIL-001
+    specification: SPEC-DOW-WATCH-001
+    implementation: frontend/src/components/dow-monitor/DowMonitorDetailDialog.tsx
+    tests: {path: frontend/src/components/dow-monitor/DowMonitorDetailDialog.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-FILTER-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - frontend/src/pages/DowMonitor.tsx
+      - frontend/src/components/dow-monitor/useDowMonitor.ts
+    tests:
+      - {path: frontend/src/pages/DowMonitor.test.tsx, type: executable-test}
+      - {path: frontend/src/components/dow-monitor/useDowMonitor.test.tsx, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-DATA-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/plugins/clickhouse/provider.py
+      - backend/app/services/dow_monitor_data.py
+    tests:
+      - {path: backend/tests/test_clickhouse_provider.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_data.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-MTF-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/services/dow_monitor_bars.py
+      - backend/app/services/dow_monitor_service.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_bars.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-SIGNAL-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/services/dow_monitor_client.py
+      - backend/app/services/dow_monitor_service.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_client.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-NOTIFY-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/services/dow_monitor_service.py
+      - backend/app/services/dow_monitor_store.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_store.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-BACKGROUND-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/main.py
+      - backend/app/services/dow_monitor_service.py
+      - scripts/check_dow_monitor_health.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_api.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_health_script.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-STALE-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/services/dow_monitor_data.py
+      - backend/app/services/dow_monitor_service.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_data.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
+  - id: REQ-DOW-WATCH-MARKET-001
+    specification: SPEC-DOW-WATCH-001
+    implementation:
+      - backend/app/services/dow_monitor_data.py
+      - backend/app/services/dow_monitor_bars.py
+    tests:
+      - {path: backend/tests/test_dow_monitor_data.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_bars.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}
   - id: REQ-DOW-WATCH-LONG-CLIENT-001
     specification: SPEC-DOW-WATCH-LONG-001
     implementation:

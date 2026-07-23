@@ -52,7 +52,17 @@ specifications:
   - id: SPEC-DOW-WATCH-001
     path: docs/superpowers/specs/2026-07-23-dow-realtime-watch-panel-design.md
     status: authoritative
-    requirements: []
+    requirements:
+      - REQ-DOW-WATCH-UI-001
+      - REQ-DOW-WATCH-DETAIL-001
+      - REQ-DOW-WATCH-FILTER-001
+      - REQ-DOW-WATCH-DATA-001
+      - REQ-DOW-WATCH-MTF-001
+      - REQ-DOW-WATCH-SIGNAL-001
+      - REQ-DOW-WATCH-NOTIFY-001
+      - REQ-DOW-WATCH-BACKGROUND-001
+      - REQ-DOW-WATCH-STALE-001
+      - REQ-DOW-WATCH-MARKET-001
   - id: SPEC-DOW-WATCH-LONG-001
     path: docs/specs/dow-watch-long-term-sidecar.md
     status: authoritative
@@ -62,10 +72,4 @@ specifications:
       - REQ-DOW-WATCH-LONG-EVENT-001
       - REQ-DOW-WATCH-LONG-RECOVERY-001
 conflicts: []
-exceptions:
-  - id: EXC-DOW-WATCH-IMPLEMENTATION-001
-    scope: SPEC-DOW-WATCH-001
-    owner: alwinzhang
-    reason: The approved phased implementation plan executes staged Tasks 2-12; full requirement indexing and traceability promotion occur only in Task 12 after backend, frontend, and 01347.HK semantic evidence exist. The empty requirement list remains valid until that promotion or expiry, whichever comes first.
-    approval: docs/decisions/2026-07-23-dow-realtime-watch-panel.md; docs/superpowers/plans/2026-07-23-dow-realtime-watch-panel.md (Task 12)
-    expires: 2026-08-06
+exceptions: []
