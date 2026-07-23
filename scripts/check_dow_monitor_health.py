@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import sys
 
 import httpx
@@ -28,7 +28,7 @@ def _aware_datetime(value: object) -> datetime:
 def main(
     argv: Sequence[str] | None = None,
     *,
-    now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
+    now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> int:
     args = _parser().parse_args(argv)
     if args.max_age_seconds <= 0:
@@ -57,7 +57,9 @@ def main(
             now = now_fn()
             if now.tzinfo is None or now.utcoffset() is None:
                 raise ValueError("now_fn must return a timezone-aware datetime")
-            age_seconds = (now.astimezone(UTC) - last_success.astimezone(UTC)).total_seconds()
+            age_seconds = (
+                now.astimezone(timezone.utc) - last_success.astimezone(timezone.utc)
+            ).total_seconds()
             if age_seconds > args.max_age_seconds:
                 raise ValueError(
                     f"last successful cycle is stale ({age_seconds:.1f}s > "
