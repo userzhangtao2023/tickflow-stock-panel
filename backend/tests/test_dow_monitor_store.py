@@ -84,6 +84,35 @@ def test_store_ignores_malformed_trailing_jsonl_and_persists_read_status(tmp_pat
     assert DowMonitorStore(tmp_path).list_notifications(unread_only=True) == []
 
 
+def test_store_recovers_unterminated_jsonl_tail_before_appending_notifications(tmp_path):
+    store = DowMonitorStore(tmp_path)
+    first = notification()
+    assert store.append_notification(first) is True
+    notifications_path = tmp_path / "user_data" / "dow_monitor_notifications.jsonl"
+    with notifications_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"truncated":')
+
+    second = notification(
+        event_key="01347.HK|30m|OPEN_LONG|LINE-8|2",
+        price=2.34,
+    ).model_copy(update={"notification_id": "notice-2"})
+    assert store.append_notification(second) is True
+    assert store.mark_read(second.notification_id) is True
+
+    restored = DowMonitorStore(tmp_path)
+    notifications = {item.notification_id: item for item in restored.list_notifications()}
+    assert notifications[first.notification_id].trigger_price == first.trigger_price
+    assert notifications[second.notification_id].read_at is not None
+
+
+def test_store_ignores_non_object_jsonl_records(tmp_path):
+    notifications_path = tmp_path / "user_data" / "dow_monitor_notifications.jsonl"
+    notifications_path.parent.mkdir()
+    notifications_path.write_text("[]\n", encoding="utf-8")
+
+    assert DowMonitorStore(tmp_path).list_notifications() == []
+
+
 def test_store_deduplicates_notifications_across_existing_store_instances(tmp_path):
     first_store = DowMonitorStore(tmp_path)
     second_store = DowMonitorStore(tmp_path)

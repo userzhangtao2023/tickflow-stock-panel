@@ -92,11 +92,7 @@ class DowMonitorStore:
             self._refresh_notifications()
             if notification.event_key in self._event_keys:
                 return False
-            self._directory.mkdir(parents=True, exist_ok=True)
-            with self._notifications_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps(notification.model_dump(mode="json"), ensure_ascii=False) + "\n"
-                )
+            self._append_jsonl_record(notification.model_dump(mode="json"))
             self._notifications.append(notification)
             self._event_keys.add(notification.event_key)
             return True
@@ -135,18 +131,13 @@ class DowMonitorStore:
                 return False
             if notification_id not in self._read_at:
                 read_at = datetime.now(UTC)
-                self._directory.mkdir(parents=True, exist_ok=True)
-                with self._notifications_path.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps(
-                            {
-                                "kind": "read-receipt",
-                                "notification_id": notification_id,
-                                "read_at": read_at.isoformat(),
-                            }
-                        )
-                        + "\n"
-                    )
+                self._append_jsonl_record(
+                    {
+                        "kind": "read-receipt",
+                        "notification_id": notification_id,
+                        "read_at": read_at.isoformat(),
+                    }
+                )
                 self._read_at[notification_id] = read_at
             return True
 
@@ -181,6 +172,8 @@ class DowMonitorStore:
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(item, dict):
+                continue
             if item.get("kind") == "read-receipt":
                 try:
                     read_at[item["notification_id"]] = datetime.fromisoformat(item["read_at"])
@@ -192,6 +185,18 @@ class DowMonitorStore:
             except (TypeError, ValueError):
                 continue
         return notifications, read_at
+
+    def _append_jsonl_record(self, record: dict) -> None:
+        self._directory.mkdir(parents=True, exist_ok=True)
+        needs_separator = False
+        if self._notifications_path.is_file() and self._notifications_path.stat().st_size:
+            with self._notifications_path.open("rb") as handle:
+                handle.seek(-1, 2)
+                needs_separator = handle.read(1) not in {b"\n", b"\r"}
+        with self._notifications_path.open("a", encoding="utf-8") as handle:
+            if needs_separator:
+                handle.write("\n")
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _refresh_notifications(self) -> None:
         self._notifications, self._read_at = self._load_notifications()
