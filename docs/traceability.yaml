@@ -100,9 +100,11 @@ requirements:
     implementation:
       - backend/app/services/dow_monitor_data.py
       - backend/app/services/dow_monitor_bars.py
+      - backend/app/services/dow_monitor_service.py
     tests:
       - {path: backend/tests/test_dow_monitor_data.py, type: executable-test}
       - {path: backend/tests/test_dow_monitor_bars.py, type: executable-test}
+      - {path: backend/tests/test_dow_monitor_service.py, type: executable-test}
     acceptance:
       - {path: docs/acceptance/2026-07-23-dow-realtime-watch-panel.md, type: semantic-acceptance}
       - {path: docs/reviews/2026-07-23-dow-realtime-watch-panel-review.md, type: independent-review}

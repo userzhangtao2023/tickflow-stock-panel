@@ -1062,8 +1062,21 @@ class DowMonitorService:
             local_now = now.astimezone(ZoneInfo(policy.timezone))
             if local_now.weekday() >= 5:
                 continue
-            if any(start <= local_now.time() < end for start, end in policy.sessions):
-                open_enabled_markets.add(item.market)
+            if not any(start <= local_now.time() < end for start, end in policy.sessions):
+                continue
+            for timeframe in TIMEFRAMES:
+                state = self.store.get_state(item.symbol, timeframe)
+                if state is None or state.source_timestamp is None:
+                    continue
+                local_source = state.source_timestamp.astimezone(ZoneInfo(policy.timezone))
+                if local_source.date() != local_now.date():
+                    continue
+                if any(
+                    start <= local_source.time() <= end
+                    for start, end in policy.sessions
+                ):
+                    open_enabled_markets.add(item.market)
+                    break
         return {
             "running": self._task is not None and not self._task.done(),
             "poll_seconds": self.poll_seconds,

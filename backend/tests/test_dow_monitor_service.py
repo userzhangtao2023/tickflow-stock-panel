@@ -1367,6 +1367,27 @@ async def test_queries_expose_source_freshness_success_error_and_running(tmp_pat
     assert status["running"] is False
 
 
+def test_status_marks_market_open_only_after_current_regular_session_data(tmp_path) -> None:
+    service, store, gateway, client = _service(tmp_path)
+    _seed_reliable_states(store, "01347.HK", "hk", NOW)
+
+    assert service.status()["open_enabled_markets"] == ["hk"]
+
+    holiday_now = datetime(2026, 10, 1, 2, 0, tzinfo=UTC)
+    previous_session = datetime(2026, 9, 30, 8, 0, tzinfo=UTC)
+    _seed_reliable_states(store, "01347.HK", "hk", previous_session)
+    holiday_service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: holiday_now,
+    )
+
+    assert holiday_service.status()["enabled_markets"] == ["hk"]
+    assert holiday_service.status()["open_enabled_markets"] == []
+
+
 @pytest.mark.asyncio
 async def test_overview_retains_latest_strict_quote_metadata_without_chart_derivation(
     tmp_path,

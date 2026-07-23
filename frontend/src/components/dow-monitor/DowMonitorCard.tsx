@@ -29,19 +29,19 @@ function visualState(
   if (forceBlocked || state?.freshness_state !== 'LIVE') {
     return state || forceBlocked ? 'blocked' : 'none'
   }
-  const backendSide = getLatestValidDowSignalSide(state.chart)
   const rawActionCode = state.snapshot?.action_code
   const actionCode = typeof rawActionCode === 'string' ? rawActionCode.toUpperCase() : null
-  if (backendSide === 'BUY' || actionCode === 'OPEN_LONG' || actionCode === 'BUY') return 'buy'
+  if (actionCode === 'OPEN_LONG' || actionCode === 'BUY') return 'buy'
   if (
-    backendSide === 'SELL'
-    || backendSide === 'RISK'
-    || actionCode === 'CLOSE_LONG'
+    actionCode === 'CLOSE_LONG'
     || actionCode === 'SELL'
     || actionCode === 'RISK'
     || actionCode === 'REDUCE'
   ) return 'sell'
   if (actionCode === 'WATCH') return 'watch'
+  const backendSide = getLatestValidDowSignalSide(state.chart)
+  if (backendSide === 'BUY') return 'buy'
+  if (backendSide === 'SELL' || backendSide === 'RISK') return 'sell'
   return 'none'
 }
 

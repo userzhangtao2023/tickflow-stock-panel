@@ -465,6 +465,21 @@ describe('Dow monitor page', () => {
     }
   })
 
+  it('keeps the current WATCH badge yellow when the chart contains historical signals', () => {
+    const historical = structuredClone(overview)
+    historical.symbols[0].states['30m']!.chart = authoritativeChart
+    hooks.overview = { data: historical, isError: false, isLoading: false }
+
+    render(<DowMonitor />)
+
+    const badge = within(screen.getByTestId('card-01347.HK')).getByRole(
+      'button',
+      { name: '30分' },
+    )
+    expect(badge).toHaveClass('text-amber-400')
+    expect(badge).not.toHaveClass('text-emerald-400', 'text-red-400')
+  })
+
   it('shows the compact no-signal state without inventing a notification', async () => {
     const user = userEvent.setup()
     render(<DowMonitor />)
