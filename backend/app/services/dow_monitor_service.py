@@ -1,0 +1,635 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from contextlib import suppress
+from copy import deepcopy
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from time import monotonic
+from typing import Literal
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+import polars as pl
+
+from app.services.dow_monitor_bars import (
+    TIMEFRAME_MINUTES,
+    TimeframeBars,
+    build_timeframes,
+)
+from app.services.dow_monitor_client import (
+    DowEngineResult,
+    DowEngineUnavailable,
+    DowSnapshot,
+)
+from app.services.dow_monitor_data import WebStockBatch, market_session_policy
+from app.services.dow_monitor_models import (
+    DowNotification,
+    DowTimeframeState,
+    MonitoredSymbol,
+)
+
+logger = logging.getLogger(__name__)
+
+TIMEFRAMES = ("5m", "15m", "30m", "60m", "day")
+INITIAL_LOOKBACK = timedelta(days=7)
+
+
+@dataclass(frozen=True)
+class ActivationState:
+    active: bool
+    family: str | None
+    structure_id: str | None
+    activation_sequence: int
+
+
+@dataclass(frozen=True)
+class EventTransition:
+    next: ActivationState
+    notify: bool
+
+
+def signal_family(action_code: str) -> str | None:
+    if action_code in {"OPEN_LONG", "OPEN_SHORT", "CLOSE_LONG", "CLOSE_SHORT"}:
+        return action_code
+    return None
+
+
+def notification_side(action_code: str) -> Literal["BUY", "SELL", "RISK"] | None:
+    if action_code == "OPEN_LONG":
+        return "BUY"
+    if action_code == "OPEN_SHORT":
+        return "SELL"
+    if action_code in {"CLOSE_LONG", "CLOSE_SHORT"}:
+        return "RISK"
+    return None
+
+
+def transition_event(
+    previous: ActivationState | None,
+    snapshot: DowSnapshot,
+) -> EventTransition:
+    family = signal_family(snapshot.action_code)
+    structure_id = snapshot.line_id
+    active = family is not None and structure_id is not None
+    if not active:
+        return EventTransition(
+            next=ActivationState(
+                active=False,
+                family=None,
+                structure_id=None,
+                activation_sequence=previous.activation_sequence if previous else 0,
+            ),
+            notify=False,
+        )
+
+    same = (
+        previous is not None
+        and previous.active
+        and previous.family == family
+        and previous.structure_id == structure_id
+    )
+    sequence = (
+        previous.activation_sequence
+        if same
+        else (previous.activation_sequence + 1 if previous else 1)
+    )
+    return EventTransition(
+        next=ActivationState(
+            active=True,
+            family=family,
+            structure_id=structure_id,
+            activation_sequence=sequence,
+        ),
+        notify=not same,
+    )
+
+
+class DowMonitorService:
+    def __init__(
+        self,
+        store,
+        data_gateway,
+        dow_client,
+        daily_loader: Callable[[str, datetime], pl.DataFrame],
+        poll_seconds: float = 15,
+        now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self.store = store
+        self._data_gateway = data_gateway
+        self._dow_client = dow_client
+        self._daily_loader = daily_loader
+        self.poll_seconds = poll_seconds
+        self._now_fn = now_fn
+        self._stop = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        self._last_started_at: datetime | None = None
+        self._last_completed_at: datetime | None = None
+        self._last_success_at: datetime | None = None
+        self._last_error: str | None = None
+        self._errors: dict[str, str] = {}
+
+    async def start(self) -> None:
+        if self._task is not None and not self._task.done():
+            return
+        self._stop = asyncio.Event()
+        self._task = asyncio.create_task(self._loop(), name="dow-monitor")
+
+    async def stop(self) -> None:
+        task = self._task
+        if task is None:
+            return
+        self._stop.set()
+        try:
+            await task
+        finally:
+            self._task = None
+
+    async def _loop(self) -> None:
+        while not self._stop.is_set():
+            started = monotonic()
+            try:
+                await self.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("dow monitor cycle failed")
+            delay = max(0.0, self.poll_seconds - (monotonic() - started))
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=delay)
+
+    async def run_once(self) -> None:
+        now = self._now()
+        self._last_started_at = now
+        enabled = [item for item in self.store.list_symbols() if item.enabled]
+        if not enabled:
+            self._last_error = None
+            self._last_success_at = now
+            self._last_completed_at = self._now()
+            return
+
+        start = self._fetch_start(enabled, now)
+        try:
+            batch = await asyncio.to_thread(
+                self._data_gateway.fetch,
+                [item.symbol for item in enabled],
+                start,
+                now,
+            )
+        except Exception as exc:
+            message = str(exc)
+            self._last_error = message
+            for item in enabled:
+                self._errors[item.symbol] = message
+                self._mark_all(item, "STALE_DATA", now)
+            self._last_completed_at = self._now()
+            return
+
+        any_success = False
+        cycle_errors: list[str] = []
+        for item in enabled:
+            try:
+                error = await self._evaluate_symbol(item, batch, now)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error = str(exc)
+                self._mark_all(item, "ANALYSIS_PAUSED", now)
+                logger.exception("dow monitor symbol failed: %s", item.symbol)
+            if error is None:
+                self._errors.pop(item.symbol, None)
+                any_success = True
+            else:
+                self._errors[item.symbol] = error
+                cycle_errors.append(f"{item.symbol}: {error}")
+
+        self._last_error = "; ".join(cycle_errors) or None
+        if any_success:
+            self._last_success_at = now
+        self._last_completed_at = self._now()
+
+    async def _evaluate_symbol(
+        self,
+        item: MonitoredSymbol,
+        batch: WebStockBatch,
+        now: datetime,
+    ) -> str | None:
+        freshness = batch.freshness_by_symbol.get(item.symbol)
+        if freshness is None or freshness.state != "LIVE":
+            self._mark_all(item, "STALE_DATA", now)
+            return (
+                freshness.reason
+                if freshness is not None and freshness.reason is not None
+                else "WebStock data is stale"
+            )
+
+        minute_rows = self._incremental_minutes(item, batch.minute_rows)
+        daily_rows = await asyncio.to_thread(self._daily_loader, item.symbol, now)
+        frames = build_timeframes(
+            item.symbol,
+            minute_rows,
+            daily_rows,
+            now,
+        )
+        errors: list[str] = []
+        for timeframe in TIMEFRAMES:
+            frame = frames[timeframe]
+            previous_state = self.store.get_state(item.symbol, timeframe)
+            bars, completion = self._merge_evaluation_bars(
+                item,
+                timeframe,
+                previous_state,
+                frame,
+                now,
+            )
+            try:
+                result = await asyncio.to_thread(
+                    self._dow_client.evaluate,
+                    item.symbol,
+                    timeframe,
+                    bars,
+                    completion,
+                    now,
+                )
+            except DowEngineUnavailable as exc:
+                self._mark_one(
+                    item,
+                    timeframe,
+                    "ANALYSIS_PAUSED",
+                    now,
+                )
+                errors.append(str(exc))
+                continue
+            self._save_result(item, timeframe, frame, result, now)
+        return "; ".join(dict.fromkeys(errors)) or None
+
+    def _save_result(
+        self,
+        item: MonitoredSymbol,
+        timeframe: str,
+        frame: TimeframeBars,
+        result: DowEngineResult,
+        now: datetime,
+    ) -> None:
+        previous_state = self.store.get_state(item.symbol, timeframe)
+        previous = self._activation_from_state(item.symbol, timeframe, previous_state)
+        transition = transition_event(previous, result.snapshot)
+        engine_payload = result.model_dump(mode="json", by_alias=True)
+        chart = {
+            "bars": deepcopy(engine_payload["bars"]),
+            "lines": deepcopy(engine_payload["lines"]),
+            "signals": deepcopy(engine_payload["signals"]),
+        }
+        timestamps = [
+            value
+            for value in (
+                previous_state.source_timestamp if previous_state else None,
+                frame.source_timestamp,
+            )
+            if value is not None
+        ]
+        source_timestamp = max(timestamps, default=None)
+
+        if transition.notify:
+            side = notification_side(result.snapshot.action_code)
+            if side is not None:
+                current = engine_payload["bars"][-1]
+                current_ohlc = {
+                    key: deepcopy(current[key])
+                    for key in (
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                    )
+                }
+                event_key = "|".join(
+                    (
+                        item.symbol,
+                        timeframe,
+                        transition.next.family or "",
+                        transition.next.structure_id or "",
+                        str(transition.next.activation_sequence),
+                    )
+                )
+                self.store.append_notification(
+                    DowNotification(
+                        notification_id=uuid4().hex,
+                        event_key=event_key,
+                        symbol=item.symbol,
+                        market=item.market,
+                        timeframe=timeframe,
+                        side=side,
+                        action_name=result.snapshot.action,
+                        shape_name=result.snapshot.phase,
+                        triggered_at=result.evaluated_at,
+                        trigger_price=float(current["close"]),
+                        snapshot_payload=deepcopy(
+                            {
+                                "engine": engine_payload,
+                                "current_ohlc": current_ohlc,
+                                "source_timestamp": (
+                                    source_timestamp.isoformat()
+                                    if source_timestamp is not None
+                                    else None
+                                ),
+                                "activation": asdict(transition.next),
+                            }
+                        ),
+                    )
+                )
+
+        self.store.save_state(
+            DowTimeframeState(
+                symbol=item.symbol,
+                market=item.market,
+                timeframe=timeframe,
+                freshness_state="LIVE",
+                source_timestamp=source_timestamp,
+                snapshot=deepcopy(engine_payload["snapshot"]),
+                chart=chart,
+                updated_at=now,
+            )
+        )
+
+    def _activation_from_state(
+        self,
+        symbol: str,
+        timeframe: str,
+        state: DowTimeframeState | None,
+    ) -> ActivationState | None:
+        sequence = self._maximum_sequence(symbol, timeframe)
+        if state is None:
+            return ActivationState(False, None, None, sequence) if sequence else None
+        family = signal_family(str(state.snapshot.get("action_code") or ""))
+        structure_id = state.snapshot.get("line_id")
+        active = family is not None and isinstance(structure_id, str) and bool(structure_id)
+        return ActivationState(
+            active=active,
+            family=family if active else None,
+            structure_id=structure_id if active else None,
+            activation_sequence=sequence,
+        )
+
+    def _maximum_sequence(self, symbol: str, timeframe: str) -> int:
+        maximum = 0
+        for notification in self.store.list_notifications(limit=1_000_000):
+            if notification.symbol != symbol or notification.timeframe != timeframe:
+                continue
+            activation = notification.snapshot_payload.get("activation")
+            if isinstance(activation, dict):
+                try:
+                    maximum = max(maximum, int(activation["activation_sequence"]))
+                    continue
+                except (KeyError, TypeError, ValueError):
+                    pass
+            try:
+                maximum = max(maximum, int(notification.event_key.rsplit("|", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+        return maximum
+
+    def _fetch_start(
+        self,
+        enabled: list[MonitoredSymbol],
+        now: datetime,
+    ) -> datetime:
+        starts = [
+            self._symbol_reliable_timestamp(item) or now - INITIAL_LOOKBACK for item in enabled
+        ]
+        return min(starts, default=now - INITIAL_LOOKBACK)
+
+    def _symbol_reliable_timestamp(
+        self,
+        item: MonitoredSymbol,
+    ) -> datetime | None:
+        timestamps = []
+        for timeframe in TIMEFRAMES:
+            state = self.store.get_state(item.symbol, timeframe)
+            if state is None or state.source_timestamp is None:
+                return None
+            timestamps.append(state.source_timestamp)
+        return min(timestamps)
+
+    def _incremental_minutes(
+        self,
+        item: MonitoredSymbol,
+        minute_rows: pl.DataFrame,
+    ) -> pl.DataFrame:
+        reliable = self._symbol_reliable_timestamp(item)
+        if reliable is None or minute_rows.is_empty():
+            return minute_rows
+
+        zone = ZoneInfo(market_session_policy(item.symbol).timezone)
+        reliable_local = reliable.astimezone(zone).replace(tzinfo=None)
+        rows = []
+        for row in minute_rows.to_dicts():
+            if str(row.get("symbol") or "").strip().upper() != item.symbol:
+                continue
+            value = row.get("datetime")
+            if value is None:
+                continue
+            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+            local = (
+                parsed.astimezone(zone).replace(tzinfo=None)
+                if parsed.tzinfo is not None
+                else parsed
+            )
+            if local > reliable_local:
+                rows.append(row)
+        return pl.DataFrame(rows, schema=minute_rows.schema) if rows else minute_rows.head(0)
+
+    def _merge_evaluation_bars(
+        self,
+        item: MonitoredSymbol,
+        timeframe: str,
+        previous: DowTimeframeState | None,
+        frame: TimeframeBars,
+        now: datetime,
+    ) -> tuple[list[dict], str]:
+        current = deepcopy(frame.all_bars)
+        if previous is None:
+            return current, frame.completion
+
+        historical = previous.chart.get("bars")
+        if not isinstance(historical, list) or not historical:
+            return current, frame.completion
+        if not current:
+            completion = self._historical_completion(
+                item,
+                timeframe,
+                previous,
+                historical,
+                now,
+            )
+            return deepcopy(historical), completion
+
+        merged = {
+            str(bar["timestamp"]): deepcopy(bar)
+            for bar in historical
+            if isinstance(bar, dict) and bar.get("timestamp") is not None
+        }
+        latest_historical = max(merged, default=None)
+        previous_forming = previous.snapshot.get("bar_completion") == "FORMING"
+        for bar in current:
+            timestamp = str(bar["timestamp"])
+            old = merged.get(timestamp)
+            if old is not None and previous_forming and timestamp == latest_historical:
+                combined = {
+                    "timestamp": timestamp,
+                    "open": float(old["open"]),
+                    "high": max(float(old["high"]), float(bar["high"])),
+                    "low": min(float(old["low"]), float(bar["low"])),
+                    "close": float(bar["close"]),
+                    "volume": float(old.get("volume") or 0.0) + float(bar.get("volume") or 0.0),
+                }
+                merged[timestamp] = combined
+            else:
+                merged[timestamp] = deepcopy(bar)
+        return [merged[key] for key in sorted(merged)], frame.completion
+
+    @staticmethod
+    def _historical_completion(
+        item: MonitoredSymbol,
+        timeframe: str,
+        previous: DowTimeframeState,
+        historical: list[dict],
+        now: datetime,
+    ) -> str:
+        prior = str(previous.snapshot.get("bar_completion") or "FINAL")
+        if prior == "FINAL":
+            return "FINAL"
+        last = historical[-1]
+        value = last.get("timestamp") if isinstance(last, dict) else None
+        if value is None:
+            return prior
+
+        policy = market_session_policy(item.symbol)
+        zone = ZoneInfo(policy.timezone)
+        now_local = now.astimezone(zone)
+        parsed = datetime.fromisoformat(str(value))
+        if timeframe == "day":
+            bar_date = parsed.date()
+            close = datetime.combine(bar_date, policy.sessions[-1][1], tzinfo=zone)
+            return "FINAL" if now_local >= close else prior
+
+        parsed = parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed.astimezone(zone)
+        minutes = TIMEFRAME_MINUTES[timeframe]
+        segment_end = next(
+            (
+                end
+                for start, end in policy.sessions
+                if start <= parsed.time().replace(tzinfo=None) < end
+            ),
+            None,
+        )
+        if segment_end is None:
+            return prior
+        session_end = datetime.combine(parsed.date(), segment_end, tzinfo=zone)
+        bucket_end = min(parsed + timedelta(minutes=minutes), session_end)
+        return "FINAL" if now_local >= bucket_end else prior
+
+    def _mark_all(
+        self,
+        item: MonitoredSymbol,
+        freshness_state: Literal["STALE_DATA", "ANALYSIS_PAUSED"],
+        now: datetime,
+    ) -> None:
+        for timeframe in TIMEFRAMES:
+            self._mark_one(item, timeframe, freshness_state, now)
+
+    def _mark_one(
+        self,
+        item: MonitoredSymbol,
+        timeframe: str,
+        freshness_state: Literal["STALE_DATA", "ANALYSIS_PAUSED"],
+        now: datetime,
+    ) -> None:
+        previous = self.store.get_state(item.symbol, timeframe)
+        self.store.save_state(
+            DowTimeframeState(
+                symbol=item.symbol,
+                market=item.market,
+                timeframe=timeframe,
+                freshness_state=freshness_state,
+                source_timestamp=previous.source_timestamp if previous else None,
+                snapshot=deepcopy(previous.snapshot) if previous else {},
+                chart=deepcopy(previous.chart) if previous else {},
+                updated_at=now,
+            )
+        )
+
+    def overview(self, market: str = "all") -> dict:
+        notifications = self.store.list_notifications(
+            market=None if market == "all" else market,
+            limit=1_000,
+        )
+        latest_by_symbol = {}
+        for notification in notifications:
+            latest_by_symbol.setdefault(
+                notification.symbol,
+                notification.model_dump(mode="json"),
+            )
+
+        symbols = []
+        source_timestamps: list[datetime] = []
+        for item in self.store.list_symbols():
+            if market != "all" and item.market != market:
+                continue
+            states = {}
+            for timeframe in TIMEFRAMES:
+                state = self.store.get_state(item.symbol, timeframe)
+                if state is not None:
+                    states[timeframe] = state.model_dump(mode="json")
+                    if state.source_timestamp is not None:
+                        source_timestamps.append(state.source_timestamp)
+            symbols.append(
+                {
+                    **item.model_dump(mode="json"),
+                    "states": states,
+                    "latest_notification": latest_by_symbol.get(item.symbol),
+                    "last_success_at": self._as_json_time(self._last_success_at),
+                    "last_error": self._errors.get(item.symbol),
+                }
+            )
+        return {
+            "symbols": symbols,
+            "source": "webstock",
+            "source_timestamp": self._as_json_time(max(source_timestamps, default=None)),
+        }
+
+    def detail(self, symbol: str, timeframe: str) -> dict | None:
+        state = self.store.get_state(symbol.strip().upper(), timeframe)
+        if state is None:
+            return None
+        return {
+            **state.model_dump(mode="json"),
+            "last_success_at": self._as_json_time(self._last_success_at),
+            "last_error": self._errors.get(state.symbol),
+        }
+
+    def status(self) -> dict:
+        return {
+            "running": self._task is not None and not self._task.done(),
+            "poll_seconds": self.poll_seconds,
+            "source": "webstock",
+            "last_started_at": self._as_json_time(self._last_started_at),
+            "last_completed_at": self._as_json_time(self._last_completed_at),
+            "last_success_at": self._as_json_time(self._last_success_at),
+            "last_error": self._last_error,
+            "errors": dict(self._errors),
+        }
+
+    def _now(self) -> datetime:
+        now = self._now_fn()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now_fn must return a timezone-aware datetime")
+        return now
+
+    @staticmethod
+    def _as_json_time(value: datetime | None) -> str | None:
+        return value.isoformat() if value is not None else None
