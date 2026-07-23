@@ -1026,10 +1026,23 @@ class DowMonitorService:
         }
 
     def status(self) -> dict:
+        enabled_symbols = [item for item in self.store.list_symbols() if item.enabled]
+        enabled_markets = sorted({item.market for item in enabled_symbols})
+        now = self._now()
+        open_enabled_markets: set[str] = set()
+        for item in enabled_symbols:
+            policy = market_session_policy(item.symbol)
+            local_now = now.astimezone(ZoneInfo(policy.timezone))
+            if local_now.weekday() >= 5:
+                continue
+            if any(start <= local_now.time() < end for start, end in policy.sessions):
+                open_enabled_markets.add(item.market)
         return {
             "running": self._task is not None and not self._task.done(),
             "poll_seconds": self.poll_seconds,
             "source": "webstock",
+            "enabled_markets": enabled_markets,
+            "open_enabled_markets": sorted(open_enabled_markets),
             "last_started_at": self._as_json_time(self._last_started_at),
             "last_completed_at": self._as_json_time(self._last_completed_at),
             "last_success_at": self._as_json_time(self._last_success_at),

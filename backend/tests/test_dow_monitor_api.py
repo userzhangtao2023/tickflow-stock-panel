@@ -144,6 +144,8 @@ def test_detail_validates_timeframe_and_preserves_long_term_sidecar(tmp_path) ->
 
 def test_notifications_read_and_status_expose_persisted_timestamps(tmp_path) -> None:
     service = _service(tmp_path)
+    service.store.upsert_symbol("01347.HK", "hk", True)
+    service.store.upsert_symbol("INTC.US", "us", False)
     service.store.append_notification(
         DowNotification(
             notification_id="notification-1",
@@ -178,6 +180,14 @@ def test_notifications_read_and_status_expose_persisted_timestamps(tmp_path) -> 
         "last_completed_at",
         "last_success_at",
     }
+    assert status.json()["enabled_markets"] == ["hk"]
+    assert status.json()["open_enabled_markets"] == []
+
+
+def test_health_status_is_available_to_local_patrol_without_browser_session() -> None:
+    from app import main
+
+    assert "/api/dow-monitor/status" in main._AUTH_WHITELIST_EXACT
 
 
 def test_notification_read_returns_exact_oldest_notification_beyond_list_limit(tmp_path) -> None:
