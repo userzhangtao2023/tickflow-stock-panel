@@ -112,7 +112,8 @@ const detail: DowMonitorDetailResponse = {
   snapshot: {
     action: '买入',
     action_code: 'OPEN_LONG',
-    candle_pattern: '向上突破',
+    phase: '首次突破趋势线',
+    candle_pattern: null,
     bar_completion: 'FORMING',
   },
   chart: {
@@ -206,6 +207,7 @@ describe('Dow chart mappings', () => {
         above: false,
         color: '#22C55E',
         label: '买',
+        price: 10.6,
       },
       {
         date: bars[0].timestamp,
@@ -213,6 +215,7 @@ describe('Dow chart mappings', () => {
         above: true,
         color: '#EF4444',
         label: '风险',
+        price: 9.8,
       },
     ])
   })
@@ -271,11 +274,15 @@ describe('Dow monitor detail dialog', () => {
     expect(within(dialog).getByText('量比')).toBeInTheDocument()
     expect(within(dialog).getByLabelText('量能对比周期')).toHaveDisplayValue('前1日均量')
     expect(within(dialog).getByText('买入')).toBeInTheDocument()
-    expect(within(dialog).getByText('向上突破')).toBeInTheDocument()
+    expect(within(dialog).getByText('首次突破趋势线')).toBeInTheDocument()
     expect(within(dialog).getByText(/源 2026/)).toBeInTheDocument()
     expect(screen.getByTestId('intraday-candlestick')).toHaveAttribute(
       'data-price-lines',
       expect.stringContaining('"id":"long-term"'),
+    )
+    expect(screen.getByTestId('intraday-candlestick')).toHaveAttribute(
+      'data-markers',
+      expect.stringContaining('"price":10.6'),
     )
     await user.click(within(dialog).getByRole('button', { name: '全屏查看' }))
     expect(within(dialog).getByRole('button', { name: '退出全屏' })).toBeInTheDocument()

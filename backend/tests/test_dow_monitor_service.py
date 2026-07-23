@@ -601,7 +601,10 @@ async def test_activation_notifies_once_then_reactivation_uses_next_sequence_and
     assert first.action_name == "买入\uff08开多\uff09"
     assert first.shape_name == "首次突破趋势线"
     assert first.snapshot_payload["engine"]["snapshot"]["action_code"] == "OPEN_LONG"
+    assert "macd_dif" not in first.snapshot_payload["engine"]["bars"][-1]
     assert first.snapshot_payload["current_ohlc"]["close"] == 102.5
+    chart_bar = store.get_state("01347.HK", "30m").chart["bars"][-1]
+    assert "macd_dif" in chart_bar
     frozen = deepcopy(first.snapshot_payload)
     client.last_result.snapshot.action_code = "WATCH"
     persisted = next(item for item in store.list_notifications() if item.timeframe == "30m")

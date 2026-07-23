@@ -79,7 +79,7 @@ export function DowMonitorDetailDialog({
   const sourceTime = formatServerTimestamp(detail?.source_timestamp)
   const updatedTime = formatServerTimestamp(detail?.updated_at)
   const action = textValue(detail?.snapshot?.action)
-  const shape = textValue(detail?.snapshot?.candle_pattern)
+  const shape = textValue(detail?.snapshot?.phase)
   const completion = textValue(detail?.snapshot?.bar_completion)
 
   if (!open) return null

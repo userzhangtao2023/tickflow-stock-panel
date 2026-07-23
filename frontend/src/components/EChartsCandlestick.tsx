@@ -25,12 +25,17 @@ export interface OHLC {
   kdj_j?: number | null
   boll_upper?: number | null
   boll_lower?: number | null
+  vol_ma5?: number | null
+  vol_ma10?: number | null
+  vol_ratio_5d?: number | null
 }
 
 export interface ChartMarker {
   date: string
   kind: 'buy' | 'sell' | 'neutral'
   label?: string
+  /** Exact backend signal price. Falls back to the candle extreme for legacy markers. */
+  price?: number
   /** 若为 true，标记放在蜡烛上方（如涨停连板标签）。 */
   above?: boolean
   /** 自定义标签颜色，覆盖默认的 kind 对应色。 */
@@ -489,19 +494,22 @@ function buildOption(
       const d = data[idx]
       const isBuy = m.kind === 'buy'
       const isSell = m.kind === 'sell'
+      const markerPrice = typeof m.price === 'number' && Number.isFinite(m.price)
+        ? m.price
+        : (isBuy ? d.low : d.high)
 
       if (m.above) {
         const dotColor = m.color ?? (isBuy ? '#FACC15' : CT().text)
         if (compact) {
           markPointData.push({
-            name: m.date, coord: [m.date, d.high],
+            name: m.date, coord: [m.date, markerPrice],
             symbol: 'circle', symbolSize: 4, symbolOffset: [0, -10],
             itemStyle: { color: dotColor, cursor: 'pointer' },
             label: { show: false }, z: 100, zlevel: 10,
           })
         } else {
           markPointData.push({
-            name: m.date, coord: [m.date, d.high],
+            name: m.date, coord: [m.date, markerPrice],
             symbol: 'circle', symbolSize: 12, symbolOffset: [0, -2],
             itemStyle: { color: 'transparent' },
             label: {
@@ -515,7 +523,7 @@ function buildOption(
       } else {
         markPointData.push({
           name: m.label ?? '',
-          coord: [m.date, isBuy ? d.low : d.high],
+          coord: [m.date, markerPrice],
           symbol: 'arrow', symbolSize: 12,
           symbolRotate: isBuy ? 0 : 180,
           symbolOffset: isBuy ? [0, '60%'] : [0, '-60%'],
@@ -1037,18 +1045,21 @@ export function EChartsCandlestick({
       const d = data[idx]
       const isBuy = m.kind === 'buy'
       const isSell = m.kind === 'sell'
+      const markerPrice = typeof m.price === 'number' && Number.isFinite(m.price)
+        ? m.price
+        : (isBuy ? d.low : d.high)
       if (m.above) {
         const dotColor = m.color ?? (isBuy ? '#FACC15' : CT().text)
         if (compact) {
           markPointData.push({
-            name: m.date, coord: [m.date, d.high],
+            name: m.date, coord: [m.date, markerPrice],
             symbol: 'circle', symbolSize: 4, symbolOffset: [0, -10],
             itemStyle: { color: dotColor, cursor: 'pointer' },
             label: { show: false }, z: 100, zlevel: 10,
           })
         } else {
           markPointData.push({
-            name: m.date, coord: [m.date, d.high],
+            name: m.date, coord: [m.date, markerPrice],
             symbol: 'circle', symbolSize: 12, symbolOffset: [0, -2],
             itemStyle: { color: 'transparent' },
             label: {
@@ -1062,7 +1073,7 @@ export function EChartsCandlestick({
       } else {
         markPointData.push({
           name: m.label ?? '',
-          coord: [m.date, isBuy ? d.low : d.high],
+          coord: [m.date, markerPrice],
           symbol: 'arrow', symbolSize: 12,
           symbolRotate: isBuy ? 0 : 180,
           symbolOffset: isBuy ? [0, '60%'] : [0, '-60%'],

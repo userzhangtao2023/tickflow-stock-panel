@@ -20,6 +20,24 @@ export interface DowMonitorBar {
   low: number
   close: number
   volume: number
+  ma5?: number | null
+  ma10?: number | null
+  ma20?: number | null
+  ma60?: number | null
+  macd_dif?: number | null
+  macd_dea?: number | null
+  macd_hist?: number | null
+  rsi_6?: number | null
+  rsi_14?: number | null
+  rsi_24?: number | null
+  kdj_k?: number | null
+  kdj_d?: number | null
+  kdj_j?: number | null
+  boll_upper?: number | null
+  boll_lower?: number | null
+  vol_ma5?: number | null
+  vol_ma10?: number | null
+  vol_ratio_5d?: number | null
 }
 
 export interface DowMonitorLine {

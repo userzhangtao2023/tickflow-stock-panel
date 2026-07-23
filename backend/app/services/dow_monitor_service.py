@@ -26,6 +26,7 @@ from app.services.dow_monitor_client import (
     DowSnapshot,
 )
 from app.services.dow_monitor_data import WebStockBatch, market_session_policy
+from app.services.dow_monitor_indicators import enrich_dow_chart_bars
 from app.services.dow_monitor_models import (
     DowNotification,
     DowTimeframeState,
@@ -421,7 +422,7 @@ class DowMonitorService:
         )
         engine_payload = result.model_dump(mode="json", by_alias=True)
         chart = {
-            "bars": deepcopy(engine_payload["bars"]),
+            "bars": enrich_dow_chart_bars(item.symbol, engine_payload["bars"]),
             "lines": deepcopy(engine_payload["lines"]),
             "signals": deepcopy(engine_payload["signals"]),
             "longTerm": deepcopy(engine_payload["longTerm"]),

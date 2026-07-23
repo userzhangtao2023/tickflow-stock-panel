@@ -62,6 +62,9 @@ export function toChartBars(entries: unknown): OHLC[] {
       'kdj_j',
       'boll_upper',
       'boll_lower',
+      'vol_ma5',
+      'vol_ma10',
+      'vol_ratio_5d',
     ] as const) {
       const value = entry[key]
       if (value == null || isFiniteNumber(value)) mapped[key] = value
@@ -86,6 +89,7 @@ export function toChartMarkers(signals: unknown): ChartMarker[] {
       date: signal.barTime,
       kind: buy ? 'buy' as const : 'sell' as const,
       above: !buy,
+      price: signal.price,
       color: buy ? BUY_GREEN : SELL_RED,
       label: buy ? '买' : signal.side === 'RISK' ? '风险' : '卖',
     }]
