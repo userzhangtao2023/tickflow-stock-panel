@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from copy import deepcopy
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -213,10 +214,14 @@ class FakeClient:
         action_code: str = "WATCH",
         line_id: str | None = None,
         fail_symbols: set[str] | None = None,
+        fail_timeframes: set[str] | None = None,
+        unexpected_timeframes: set[str] | None = None,
     ) -> None:
         self.action_code = action_code
         self.line_id = line_id
         self.fail_symbols = fail_symbols or set()
+        self.fail_timeframes = fail_timeframes or set()
+        self.unexpected_timeframes = unexpected_timeframes or set()
         self.calls: list[tuple[str, str]] = []
         self.received: list[tuple[str, str, list[dict]]] = []
         self.completions: list[tuple[str, str, str]] = []
@@ -237,6 +242,10 @@ class FakeClient:
         self.called.set()
         if symbol in self.fail_symbols:
             raise DowEngineUnavailable(f"{symbol} unavailable")
+        if timeframe in self.fail_timeframes:
+            raise DowEngineUnavailable(f"{symbol} {timeframe} unavailable")
+        if timeframe in self.unexpected_timeframes:
+            raise RuntimeError(f"{symbol} {timeframe} unexpected")
         self.last_result = _engine_result(
             symbol,
             timeframe,
@@ -457,6 +466,8 @@ async def test_activation_notifies_once_then_reactivation_uses_next_sequence_and
     current_now += timedelta(minutes=1)
     await service.run_once()
     assert len([item for item in store.list_notifications() if item.timeframe == "30m"]) == 1
+    watch_state = store.get_state("01347.HK", "30m")
+    store.save_state(watch_state.model_copy(update={"source_timestamp": current_now}))
 
     store = DowMonitorStore(tmp_path)
     service = DowMonitorService(
@@ -632,6 +643,7 @@ async def test_restart_after_notification_write_does_not_emit_next_sequence(tmp_
                     "structure_id": "LINE-1",
                     "activation_sequence": 1,
                 },
+                "source_timestamp": notification_at.isoformat(),
             },
         )
     )
@@ -651,7 +663,7 @@ async def test_restart_after_notification_write_does_not_emit_next_sequence(tmp_
 
 
 @pytest.mark.asyncio
-async def test_new_symbol_forces_initial_history_lookback_in_shared_batch(tmp_path) -> None:
+async def test_new_symbol_forces_full_history_cold_start_in_shared_batch(tmp_path) -> None:
     service, store, gateway, _ = _service(
         tmp_path,
         symbols=(("01347.HK", "hk", True), ("INTC.US", "us", True)),
@@ -672,7 +684,7 @@ async def test_new_symbol_forces_initial_history_lookback_in_shared_batch(tmp_pa
 
     await service.run_once()
 
-    assert gateway.calls[0][1] == NOW - timedelta(days=7)
+    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -726,6 +738,55 @@ async def test_incremental_recovery_merges_prior_context_without_duplicate_minut
     assert len(timestamps) == len(set(timestamps))
     second_60m = next(bars for _, timeframe, bars in client.received[5:] if timeframe == "60m")
     assert second_60m[-1]["volume"] == 3_600.0
+
+
+@pytest.mark.asyncio
+async def test_timeframe_recovery_uses_its_own_cutoff_without_replaying_healthy_volume(
+    tmp_path,
+) -> None:
+    hk = ZoneInfo("Asia/Hong_Kong")
+    current_now = datetime(2026, 7, 23, 10, 3, tzinfo=hk)
+    all_minutes = [
+        datetime(2026, 7, 23, 9, 30, tzinfo=hk) + timedelta(minutes=offset) for offset in range(38)
+    ]
+
+    class RangeAwareGateway:
+        def fetch(self, symbols, start, end):
+            visible = [value for value in all_minutes if start <= value <= end]
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=_minute_rows_from_values("01347.HK", visible),
+                source_timestamp=max(visible),
+                freshness_by_symbol={"01347.HK": SymbolFreshness(state="LIVE", reason=None)},
+                gap_details={"01347.HK": []},
+            )
+
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        RangeAwareGateway(),
+        client,
+        _daily_rows,
+        now_fn=lambda: current_now,
+    )
+
+    await service.run_once()
+    current_now = datetime(2026, 7, 23, 10, 5, tzinfo=hk)
+    client.fail_timeframes = {"15m"}
+    await service.run_once()
+    current_now = datetime(2026, 7, 23, 10, 7, tzinfo=hk)
+    client.fail_timeframes.clear()
+    await service.run_once()
+
+    third_calls = client.received[10:]
+    third_5m = next(bars for _, timeframe, bars in third_calls if timeframe == "5m")
+    third_15m = next(bars for _, timeframe, bars in third_calls if timeframe == "15m")
+    assert third_5m[-1]["timestamp"].endswith("10:05:00+08:00")
+    assert third_5m[-1]["volume"] == 300.0
+    assert third_15m[-1]["timestamp"].endswith("10:00:00+08:00")
+    assert third_15m[-1]["volume"] == 800.0
 
 
 @pytest.mark.asyncio
@@ -832,3 +893,278 @@ async def test_queries_expose_source_freshness_success_error_and_running(tmp_pat
     assert status["last_success_at"] is not None
     assert status["last_error"] is None
     assert status["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_cold_start_keeps_t_minus_one_across_a_share_long_holiday(tmp_path) -> None:
+    shanghai = ZoneInfo("Asia/Shanghai")
+    current_now = datetime(2026, 10, 9, 10, 0, tzinfo=shanghai)
+    minutes = [
+        datetime(2026, 9, 30, 14, 59, tzinfo=shanghai),
+        datetime(2026, 10, 9, 9, 30, tzinfo=shanghai),
+    ]
+
+    class HolidayGateway:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def fetch(self, symbols, start, end):
+            self.calls.append((symbols, start, end))
+            visible = [value for value in minutes if start <= value <= end]
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=_minute_rows_from_values("600519.SH", visible),
+                source_timestamp=max(visible),
+                freshness_by_symbol={"600519.SH": SymbolFreshness(state="LIVE", reason=None)},
+                gap_details={"600519.SH": []},
+            )
+
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("600519.SH", "cn", True)
+    gateway = HolidayGateway()
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: current_now,
+    )
+
+    await service.run_once()
+
+    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
+    bars = next(bars for _, timeframe, bars in client.received if timeframe == "5m")
+    assert bars[0]["timestamp"].startswith("2026-09-30")
+    assert bars[-1]["timestamp"].startswith("2026-10-09")
+
+
+@pytest.mark.asyncio
+async def test_cold_start_preserves_intc_131_bar_30m_context(tmp_path) -> None:
+    new_york = ZoneInfo("America/New_York")
+    current_now = datetime(2026, 7, 22, 16, 1, tzinfo=new_york)
+    trading_dates = [
+        date(2026, 7, 8),
+        date(2026, 7, 9),
+        date(2026, 7, 10),
+        date(2026, 7, 13),
+        date(2026, 7, 14),
+        date(2026, 7, 15),
+        date(2026, 7, 16),
+        date(2026, 7, 17),
+        date(2026, 7, 20),
+        date(2026, 7, 21),
+        date(2026, 7, 22),
+    ]
+    candidates = [
+        datetime.combine(day, datetime.min.time(), tzinfo=new_york).replace(hour=9, minute=30)
+        + timedelta(minutes=30 * bucket)
+        for day in trading_dates
+        for bucket in range(13)
+    ]
+    minutes = [*candidates[:130], candidates[-1]]
+
+    class IntcHistoryGateway:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def fetch(self, symbols, start, end):
+            self.calls.append((symbols, start, end))
+            visible = [value for value in minutes if start <= value <= end]
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=_minute_rows_from_values("INTC.US", visible),
+                source_timestamp=max(visible),
+                freshness_by_symbol={"INTC.US": SymbolFreshness(state="LIVE", reason=None)},
+                gap_details={"INTC.US": []},
+            )
+
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("INTC.US", "us", True)
+    gateway = IntcHistoryGateway()
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: current_now,
+    )
+
+    await service.run_once()
+
+    bars = next(bars for _, timeframe, bars in client.received if timeframe == "30m")
+    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
+    assert len(bars) == 131
+    assert bars[0]["timestamp"].startswith("2026-07-08")
+    assert bars[-1]["timestamp"].startswith("2026-07-22")
+
+
+@pytest.mark.asyncio
+async def test_stale_mark_after_notification_crash_does_not_create_sequence_two(
+    tmp_path,
+) -> None:
+    inactive_at = NOW - timedelta(minutes=3)
+    notification_at = NOW - timedelta(minutes=2)
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    for timeframe in TIMEFRAMES:
+        store.save_state(
+            DowTimeframeState(
+                symbol="01347.HK",
+                market="hk",
+                timeframe=timeframe,
+                freshness_state="LIVE",
+                source_timestamp=inactive_at,
+                snapshot={"action_code": "WATCH", "line_id": None},
+                chart={"bars": [], "lines": [], "signals": []},
+                updated_at=inactive_at,
+            )
+        )
+    store.append_notification(
+        DowNotification(
+            notification_id="written-before-stale",
+            event_key="01347.HK|30m|OPEN_LONG|LINE-1|1",
+            symbol="01347.HK",
+            market="hk",
+            timeframe="30m",
+            side="BUY",
+            action_name="买入",
+            shape_name="首次突破趋势线",
+            triggered_at=notification_at,
+            trigger_price=102.0,
+            snapshot_payload={
+                "engine": {"snapshot": {"action_code": "OPEN_LONG", "line_id": "LINE-1"}},
+                "activation": {
+                    "active": True,
+                    "family": "OPEN_LONG",
+                    "structure_id": "LINE-1",
+                    "activation_sequence": 1,
+                },
+                "source_timestamp": notification_at.isoformat(),
+            },
+        )
+    )
+    stale_service = DowMonitorService(
+        store,
+        FakeGateway(RuntimeError("webstock down")),
+        FakeClient(),
+        _daily_rows,
+        now_fn=lambda: NOW - timedelta(minutes=1),
+    )
+    await stale_service.run_once()
+    assert store.get_state("01347.HK", "30m").updated_at == NOW - timedelta(minutes=1)
+
+    restored = DowMonitorStore(tmp_path)
+    service = DowMonitorService(
+        restored,
+        FakeGateway(_batch("01347.HK")),
+        FakeClient(action_code="OPEN_LONG", line_id="LINE-1"),
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+    await service.run_once()
+
+    keys = [item.event_key for item in restored.list_notifications() if item.timeframe == "30m"]
+    assert keys == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_timeframe_error_pauses_only_that_frame_and_continues(
+    tmp_path,
+) -> None:
+    client = FakeClient(unexpected_timeframes={"15m"})
+    service, store, _, _ = _service(tmp_path, client=client)
+
+    await service.run_once()
+
+    assert client.calls == [("01347.HK", timeframe) for timeframe in TIMEFRAMES]
+    assert store.get_state("01347.HK", "5m").freshness_state == "LIVE"
+    assert store.get_state("01347.HK", "15m").freshness_state == "ANALYSIS_PAUSED"
+    assert store.get_state("01347.HK", "30m").freshness_state == "LIVE"
+    assert store.get_state("01347.HK", "60m").freshness_state == "LIVE"
+    assert store.get_state("01347.HK", "day").freshness_state == "LIVE"
+    assert "15m unexpected" in service.status()["errors"]["01347.HK"]
+
+
+@pytest.mark.asyncio
+async def test_last_success_is_isolated_per_symbol_and_recovers_from_store(tmp_path) -> None:
+    client = FakeClient(fail_symbols={"01347.HK"})
+    service, store, _, _ = _service(
+        tmp_path,
+        symbols=(("01347.HK", "hk", True), ("INTC.US", "us", True)),
+        batch=_batch("01347.HK", "INTC.US"),
+        client=client,
+    )
+
+    await service.run_once()
+
+    by_symbol = {item["symbol"]: item for item in service.overview()["symbols"]}
+    assert by_symbol["01347.HK"]["last_success_at"] is None
+    assert by_symbol["INTC.US"]["last_success_at"] == NOW.isoformat()
+    persisted_success = max(
+        store.get_state("INTC.US", timeframe).source_timestamp for timeframe in TIMEFRAMES
+    )
+
+    restarted = DowMonitorService(
+        DowMonitorStore(tmp_path),
+        FakeGateway(_batch("01347.HK", "INTC.US")),
+        FakeClient(),
+        _daily_rows,
+        now_fn=lambda: NOW + timedelta(minutes=1),
+    )
+    restarted_by_symbol = {item["symbol"]: item for item in restarted.overview()["symbols"]}
+    assert restarted_by_symbol["01347.HK"]["last_success_at"] is None
+    assert restarted_by_symbol["INTC.US"]["last_success_at"] == persisted_success.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_background_cycle_keeps_event_loop_responsive_during_store_io(tmp_path) -> None:
+    class SlowStore(DowMonitorStore):
+        def list_symbols(self):
+            time.sleep(0.15)
+            return super().list_symbols()
+
+    store = SlowStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    service = DowMonitorService(
+        store,
+        FakeGateway(_batch("01347.HK")),
+        FakeClient(),
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    started = time.perf_counter()
+    cycle = asyncio.create_task(service.run_once())
+    await asyncio.sleep(0.02)
+    elapsed = time.perf_counter() - started
+    await cycle
+
+    assert elapsed < 0.1
+
+
+@pytest.mark.asyncio
+async def test_cycle_builds_one_notification_index_instead_of_scanning_per_frame(
+    tmp_path,
+) -> None:
+    class CountingStore(DowMonitorStore):
+        notification_scans = 0
+
+        def list_notifications(self, *args, **kwargs):
+            self.notification_scans += 1
+            return super().list_notifications(*args, **kwargs)
+
+    store = CountingStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    service = DowMonitorService(
+        store,
+        FakeGateway(_batch("01347.HK")),
+        FakeClient(),
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    assert store.notification_scans == 1

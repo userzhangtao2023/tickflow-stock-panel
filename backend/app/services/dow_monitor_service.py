@@ -34,7 +34,8 @@ from app.services.dow_monitor_models import (
 logger = logging.getLogger(__name__)
 
 TIMEFRAMES = ("5m", "15m", "30m", "60m", "day")
-INITIAL_LOOKBACK = timedelta(days=7)
+WEBSTOCK_HISTORY_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+NotificationIndex = dict[tuple[str, str], list[DowNotification]]
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class DowMonitorService:
         self._last_started_at: datetime | None = None
         self._last_completed_at: datetime | None = None
         self._last_success_at: datetime | None = None
+        self._last_success_by_symbol: dict[str, datetime] = {}
         self._last_error: str | None = None
         self._errors: dict[str, str] = {}
 
@@ -163,14 +165,16 @@ class DowMonitorService:
     async def run_once(self) -> None:
         now = self._now()
         self._last_started_at = now
-        enabled = [item for item in self.store.list_symbols() if item.enabled]
+        enabled = [
+            item for item in await asyncio.to_thread(self.store.list_symbols) if item.enabled
+        ]
         if not enabled:
             self._last_error = None
             self._last_success_at = now
             self._last_completed_at = self._now()
             return
 
-        start = self._fetch_start(enabled, now)
+        start = await asyncio.to_thread(self._fetch_start, enabled)
         try:
             batch = await asyncio.to_thread(
                 self._data_gateway.fetch,
@@ -183,24 +187,34 @@ class DowMonitorService:
             self._last_error = message
             for item in enabled:
                 self._errors[item.symbol] = message
-                self._mark_all(item, "STALE_DATA", now)
+                await asyncio.to_thread(self._mark_all, item, "STALE_DATA", now)
             self._last_completed_at = self._now()
             return
 
+        notification_index = await asyncio.to_thread(self._load_notification_index)
         any_success = False
         cycle_errors: list[str] = []
         for item in enabled:
             try:
-                error = await self._evaluate_symbol(item, batch, now)
+                error, symbol_succeeded = await asyncio.to_thread(
+                    self._evaluate_symbol,
+                    item,
+                    batch,
+                    now,
+                    notification_index,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 error = str(exc)
-                self._mark_all(item, "ANALYSIS_PAUSED", now)
+                symbol_succeeded = False
+                await asyncio.to_thread(self._mark_all, item, "ANALYSIS_PAUSED", now)
                 logger.exception("dow monitor symbol failed: %s", item.symbol)
+            if symbol_succeeded:
+                self._last_success_by_symbol[item.symbol] = now
+                any_success = True
             if error is None:
                 self._errors.pop(item.symbol, None)
-                any_success = True
             else:
                 self._errors[item.symbol] = error
                 cycle_errors.append(f"{item.symbol}: {error}")
@@ -210,33 +224,42 @@ class DowMonitorService:
             self._last_success_at = now
         self._last_completed_at = self._now()
 
-    async def _evaluate_symbol(
+    def _evaluate_symbol(
         self,
         item: MonitoredSymbol,
         batch: WebStockBatch,
         now: datetime,
-    ) -> str | None:
+        notification_index: NotificationIndex,
+    ) -> tuple[str | None, bool]:
         freshness = batch.freshness_by_symbol.get(item.symbol)
         if freshness is None or freshness.state != "LIVE":
             self._mark_all(item, "STALE_DATA", now)
             return (
-                freshness.reason
-                if freshness is not None and freshness.reason is not None
-                else "WebStock data is stale"
+                (
+                    freshness.reason
+                    if freshness is not None and freshness.reason is not None
+                    else "WebStock data is stale"
+                ),
+                False,
             )
 
-        minute_rows = self._incremental_minutes(item, batch.minute_rows)
-        daily_rows = await asyncio.to_thread(self._daily_loader, item.symbol, now)
-        frames = build_timeframes(
-            item.symbol,
-            minute_rows,
-            daily_rows,
-            now,
-        )
+        daily_rows = self._daily_loader(item.symbol, now)
+        frames_by_cutoff: dict[str | None, dict[str, TimeframeBars]] = {}
         errors: list[str] = []
+        successes = 0
         for timeframe in TIMEFRAMES:
-            frame = frames[timeframe]
             previous_state = self.store.get_state(item.symbol, timeframe)
+            cutoff = previous_state.source_timestamp if previous_state is not None else None
+            cutoff_key = cutoff.isoformat() if cutoff is not None else None
+            if cutoff_key not in frames_by_cutoff:
+                minute_rows = self._incremental_minutes(item, batch.minute_rows, cutoff)
+                frames_by_cutoff[cutoff_key] = build_timeframes(
+                    item.symbol,
+                    minute_rows,
+                    daily_rows,
+                    now,
+                )
+            frame = frames_by_cutoff[cutoff_key][timeframe]
             bars, completion = self._merge_evaluation_bars(
                 item,
                 timeframe,
@@ -245,15 +268,14 @@ class DowMonitorService:
                 now,
             )
             try:
-                result = await asyncio.to_thread(
-                    self._dow_client.evaluate,
+                result = self._dow_client.evaluate(
                     item.symbol,
                     timeframe,
                     bars,
                     completion,
                     now,
                 )
-            except DowEngineUnavailable as exc:
+            except Exception as exc:
                 self._mark_one(
                     item,
                     timeframe,
@@ -261,9 +283,23 @@ class DowMonitorService:
                     now,
                 )
                 errors.append(str(exc))
+                if not isinstance(exc, DowEngineUnavailable):
+                    logger.exception(
+                        "dow monitor timeframe failed: %s %s",
+                        item.symbol,
+                        timeframe,
+                    )
                 continue
-            self._save_result(item, timeframe, frame, result, now)
-        return "; ".join(dict.fromkeys(errors)) or None
+            self._save_result(
+                item,
+                timeframe,
+                frame,
+                result,
+                now,
+                notification_index,
+            )
+            successes += 1
+        return "; ".join(dict.fromkeys(errors)) or None, successes > 0
 
     def _save_result(
         self,
@@ -272,6 +308,7 @@ class DowMonitorService:
         frame: TimeframeBars,
         result: DowEngineResult,
         now: datetime,
+        notification_index: NotificationIndex,
     ) -> None:
         previous_state = self.store.get_state(item.symbol, timeframe)
         previous = self._activation_from_state(
@@ -279,6 +316,7 @@ class DowMonitorService:
             timeframe,
             previous_state,
             result.snapshot,
+            notification_index,
         )
         transition = transition_event(previous, result.snapshot)
         engine_payload = result.model_dump(mode="json", by_alias=True)
@@ -321,32 +359,32 @@ class DowMonitorService:
                         str(transition.next.activation_sequence),
                     )
                 )
-                self.store.append_notification(
-                    DowNotification(
-                        notification_id=uuid4().hex,
-                        event_key=event_key,
-                        symbol=item.symbol,
-                        market=item.market,
-                        timeframe=timeframe,
-                        side=side,
-                        action_name=result.snapshot.action,
-                        shape_name=result.snapshot.phase,
-                        triggered_at=result.evaluated_at,
-                        trigger_price=float(current["close"]),
-                        snapshot_payload=deepcopy(
-                            {
-                                "engine": engine_payload,
-                                "current_ohlc": current_ohlc,
-                                "source_timestamp": (
-                                    source_timestamp.isoformat()
-                                    if source_timestamp is not None
-                                    else None
-                                ),
-                                "activation": asdict(transition.next),
-                            }
-                        ),
-                    )
+                notification = DowNotification(
+                    notification_id=uuid4().hex,
+                    event_key=event_key,
+                    symbol=item.symbol,
+                    market=item.market,
+                    timeframe=timeframe,
+                    side=side,
+                    action_name=result.snapshot.action,
+                    shape_name=result.snapshot.phase,
+                    triggered_at=result.evaluated_at,
+                    trigger_price=float(current["close"]),
+                    snapshot_payload=deepcopy(
+                        {
+                            "engine": engine_payload,
+                            "current_ohlc": current_ohlc,
+                            "source_timestamp": (
+                                source_timestamp.isoformat()
+                                if source_timestamp is not None
+                                else None
+                            ),
+                            "activation": asdict(transition.next),
+                        }
+                    ),
                 )
+                if self.store.append_notification(notification):
+                    notification_index.setdefault((item.symbol, timeframe), []).append(notification)
 
         self.store.save_state(
             DowTimeframeState(
@@ -367,8 +405,9 @@ class DowMonitorService:
         timeframe: str,
         state: DowTimeframeState | None,
         current: DowSnapshot,
+        notification_index: NotificationIndex,
     ) -> ActivationState | None:
-        sequence = self._maximum_sequence(symbol, timeframe)
+        sequence = self._maximum_sequence(symbol, timeframe, notification_index)
         if state is None:
             return ActivationState(False, None, None, sequence) if sequence else None
         family = signal_family(str(state.snapshot.get("action_code") or ""))
@@ -387,6 +426,7 @@ class DowMonitorService:
             timeframe,
             state,
             current,
+            notification_index,
         )
         return recorded or previous
 
@@ -396,14 +436,13 @@ class DowMonitorService:
         timeframe: str,
         state: DowTimeframeState,
         current: DowSnapshot,
+        notification_index: NotificationIndex,
     ) -> ActivationState | None:
         family = signal_family(current.action_code)
         structure_id = current.line_id
         if family is None or structure_id is None:
             return None
-        for notification in self.store.list_notifications(limit=1_000_000):
-            if notification.symbol != symbol or notification.timeframe != timeframe:
-                continue
+        for notification in notification_index.get((symbol, timeframe), []):
             activation = notification.snapshot_payload.get("activation")
             notification_family = activation.get("family") if isinstance(activation, dict) else None
             notification_structure = (
@@ -415,10 +454,16 @@ class DowMonitorService:
                 if isinstance(snapshot, dict):
                     notification_family = signal_family(str(snapshot.get("action_code") or ""))
                     notification_structure = snapshot.get("line_id")
+            notification_source = self._notification_source_timestamp(notification)
+            notification_follows_state = (
+                notification_source >= state.source_timestamp
+                if notification_source is not None and state.source_timestamp is not None
+                else notification.triggered_at >= state.updated_at
+            )
             if (
                 notification_family != family
                 or notification_structure != structure_id
-                or notification.triggered_at < state.updated_at
+                or not notification_follows_state
             ):
                 continue
             try:
@@ -437,11 +482,27 @@ class DowMonitorService:
             )
         return None
 
-    def _maximum_sequence(self, symbol: str, timeframe: str) -> int:
+    @staticmethod
+    def _notification_source_timestamp(
+        notification: DowNotification,
+    ) -> datetime | None:
+        value = notification.snapshot_payload.get("source_timestamp")
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
+
+    def _maximum_sequence(
+        self,
+        symbol: str,
+        timeframe: str,
+        notification_index: NotificationIndex,
+    ) -> int:
         maximum = 0
-        for notification in self.store.list_notifications(limit=1_000_000):
-            if notification.symbol != symbol or notification.timeframe != timeframe:
-                continue
+        for notification in notification_index.get((symbol, timeframe), []):
             activation = notification.snapshot_payload.get("activation")
             if isinstance(activation, dict):
                 try:
@@ -455,34 +516,30 @@ class DowMonitorService:
                 continue
         return maximum
 
-    def _fetch_start(
-        self,
-        enabled: list[MonitoredSymbol],
-        now: datetime,
-    ) -> datetime:
-        starts = [
-            self._symbol_reliable_timestamp(item) or now - INITIAL_LOOKBACK for item in enabled
-        ]
-        return min(starts, default=now - INITIAL_LOOKBACK)
+    def _load_notification_index(self) -> NotificationIndex:
+        index: NotificationIndex = {}
+        for notification in self.store.list_notifications(limit=1_000_000):
+            index.setdefault((notification.symbol, notification.timeframe), []).append(notification)
+        return index
 
-    def _symbol_reliable_timestamp(
-        self,
-        item: MonitoredSymbol,
-    ) -> datetime | None:
-        timestamps = []
-        for timeframe in TIMEFRAMES:
-            state = self.store.get_state(item.symbol, timeframe)
-            if state is None or state.source_timestamp is None:
-                return None
-            timestamps.append(state.source_timestamp)
-        return min(timestamps)
+    def _fetch_start(self, enabled: list[MonitoredSymbol]) -> datetime:
+        starts: list[datetime] = []
+        for item in enabled:
+            timestamps: list[datetime] = []
+            for timeframe in TIMEFRAMES:
+                state = self.store.get_state(item.symbol, timeframe)
+                if state is None or state.source_timestamp is None:
+                    return WEBSTOCK_HISTORY_EPOCH
+                timestamps.append(state.source_timestamp)
+            starts.append(min(timestamps))
+        return min(starts, default=WEBSTOCK_HISTORY_EPOCH)
 
     def _incremental_minutes(
         self,
         item: MonitoredSymbol,
         minute_rows: pl.DataFrame,
+        reliable: datetime | None,
     ) -> pl.DataFrame:
-        reliable = self._symbol_reliable_timestamp(item)
         if reliable is None or minute_rows.is_empty():
             return minute_rows
 
@@ -654,7 +711,9 @@ class DowMonitorService:
                     **item.model_dump(mode="json"),
                     "states": states,
                     "latest_notification": latest_by_symbol.get(item.symbol),
-                    "last_success_at": self._as_json_time(self._last_success_at),
+                    "last_success_at": self._as_json_time(
+                        self._last_success_for_symbol(item.symbol)
+                    ),
                     "last_error": self._errors.get(item.symbol),
                 }
             )
@@ -670,7 +729,7 @@ class DowMonitorService:
             return None
         return {
             **state.model_dump(mode="json"),
-            "last_success_at": self._as_json_time(self._last_success_at),
+            "last_success_at": self._as_json_time(self._last_success_for_symbol(state.symbol)),
             "last_error": self._errors.get(state.symbol),
         }
 
@@ -691,6 +750,17 @@ class DowMonitorService:
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now_fn must return a timezone-aware datetime")
         return now
+
+    def _last_success_for_symbol(self, symbol: str) -> datetime | None:
+        runtime = self._last_success_by_symbol.get(symbol)
+        if runtime is not None:
+            return runtime
+        persisted: list[datetime] = []
+        for timeframe in TIMEFRAMES:
+            state = self.store.get_state(symbol, timeframe)
+            if state is not None and state.snapshot and state.source_timestamp is not None:
+                persisted.append(state.source_timestamp)
+        return max(persisted, default=None)
 
     @staticmethod
     def _as_json_time(value: datetime | None) -> str | None:
