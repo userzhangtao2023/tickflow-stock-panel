@@ -1,0 +1,219 @@
+import { Trash2 } from 'lucide-react'
+import { useState } from 'react'
+
+import { cn } from '@/lib/cn'
+
+import { DowMiniChart } from './DowMiniChart'
+import type {
+  DowMonitorOverviewSymbol,
+  DowMonitorTimeframeState,
+  DowSignalSide,
+  DowTimeframe,
+} from './types'
+
+const TIMEFRAMES: Array<{ value: DowTimeframe; label: string }> = [
+  { value: '5m', label: '5分' },
+  { value: '15m', label: '15分' },
+  { value: '30m', label: '30分' },
+  { value: '60m', label: '60分' },
+  { value: 'day', label: '日K' },
+]
+
+type VisualState = 'buy' | 'sell' | 'watch' | 'none' | 'blocked'
+
+function visualState(state: DowMonitorTimeframeState | undefined): VisualState {
+  if (!state) return 'none'
+  if (state.freshness_state !== 'LIVE') return 'blocked'
+  const backendSide = state.chart.signals?.at(-1)?.side.toUpperCase()
+  const actionCode = state.snapshot.action_code?.toUpperCase()
+  if (backendSide === 'BUY' || actionCode === 'OPEN_LONG' || actionCode === 'BUY') return 'buy'
+  if (
+    backendSide === 'SELL'
+    || backendSide === 'RISK'
+    || actionCode === 'CLOSE_LONG'
+    || actionCode === 'SELL'
+    || actionCode === 'RISK'
+    || actionCode === 'REDUCE'
+  ) return 'sell'
+  if (actionCode === 'WATCH') return 'watch'
+  return 'none'
+}
+
+function stateClass(state: VisualState) {
+  switch (state) {
+    case 'buy':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+    case 'sell':
+      return 'border-red-500/30 bg-red-500/10 text-red-400'
+    case 'watch':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+    case 'blocked':
+      return 'border-border bg-elevated/50 text-muted opacity-60'
+    default:
+      return 'border-border bg-elevated/50 text-muted'
+  }
+}
+
+function signalClass(side: DowSignalSide) {
+  return side === 'BUY' ? 'text-emerald-400' : 'text-red-400'
+}
+
+function selectedPrice(state: DowMonitorTimeframeState | undefined) {
+  const bars = state?.chart.bars ?? []
+  const first = bars[0]
+  const last = bars.at(-1)
+  if (!last) return { price: null, change: null }
+  return {
+    price: last.close,
+    change: first && first.close !== 0 ? ((last.close - first.close) / first.close) * 100 : null,
+  }
+}
+
+function blockedLabel(item: DowMonitorOverviewSymbol, state: DowMonitorTimeframeState | undefined) {
+  if (!item.enabled) return '监控已暂停'
+  if (state?.freshness_state === 'STALE_DATA') return '数据延迟'
+  if (state?.freshness_state === 'ANALYSIS_PAUSED') return '分析暂停'
+  return null
+}
+
+export function DowMonitorCard({
+  item,
+  onOpen,
+  onToggle,
+  onRemove,
+}: {
+  item: DowMonitorOverviewSymbol
+  onOpen: (symbol: string, timeframe: DowTimeframe) => void
+  onToggle: (symbol: string, enabled: boolean) => void
+  onRemove: (symbol: string) => void
+}) {
+  const [timeframe, setTimeframe] = useState<DowTimeframe>('5m')
+  const selectedState = item.states[timeframe]
+  const blocked = blockedLabel(item, selectedState)
+  const { price, change } = selectedPrice(selectedState)
+
+  const open = () => onOpen(item.symbol, timeframe)
+
+  return (
+    <article
+      data-testid={`card-${item.symbol}`}
+      data-tradable={blocked ? 'false' : 'true'}
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          open()
+        }
+      }}
+      className={cn(
+        'group relative min-w-0 cursor-pointer overflow-hidden rounded-card border bg-surface transition-colors hover:border-accent/40',
+        blocked ? 'border-border/70 opacity-75' : 'border-border',
+      )}
+    >
+      <div className="flex items-start gap-2 px-2.5 pb-1.5 pt-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-sm font-semibold tracking-wide">{item.symbol}</div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="font-mono text-lg tabular-nums">
+              {price == null ? '—' : price.toFixed(2)}
+            </span>
+            {change != null && (
+              <span className={cn(
+                'font-mono text-[10px] tabular-nums',
+                change > 0 ? 'text-bull' : change < 0 ? 'text-bear' : 'text-muted',
+              )}>
+                {change > 0 ? '+' : ''}{change.toFixed(2)}%
+              </span>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-label={`${item.symbol} 监控开关`}
+          aria-checked={item.enabled}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggle(item.symbol, !item.enabled)
+          }}
+          className={cn(
+            'relative mt-0.5 h-[18px] w-8 shrink-0 rounded-full transition-colors',
+            item.enabled ? 'bg-accent/70' : 'bg-border',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white transition-transform',
+              item.enabled ? 'translate-x-0' : '-translate-x-4',
+            )}
+            style={{ right: 2 }}
+          />
+        </button>
+
+        <button
+          type="button"
+          aria-label={`移除 ${item.symbol}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onRemove(item.symbol)
+          }}
+          className="rounded p-0.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-5 gap-1 px-2.5 pb-1.5">
+        {TIMEFRAMES.map(option => {
+          const state = item.states[option.value]
+          const currentVisualState = visualState(state)
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-label={option.label}
+              aria-pressed={timeframe === option.value}
+              data-tradable={currentVisualState === 'blocked' || !item.enabled ? 'false' : 'true'}
+              onClick={(event) => {
+                event.stopPropagation()
+                setTimeframe(option.value)
+              }}
+              className={cn(
+                'h-6 rounded border text-[10px] font-medium transition-colors',
+                stateClass(currentVisualState),
+                timeframe === option.value && 'ring-1 ring-accent/70',
+              )}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="border-y border-border/50 px-1">
+        <DowMiniChart
+          chart={selectedState?.chart ?? {}}
+          testId={`mini-chart-${item.symbol}-${timeframe}`}
+        />
+      </div>
+
+      <div className="flex h-8 min-w-0 items-center gap-1.5 px-2.5 text-xs">
+        {blocked ? (
+          <span className="font-medium text-muted">{blocked}</span>
+        ) : item.latest_notification ? (
+          <>
+            <span className={cn('shrink-0 font-medium', signalClass(item.latest_notification.side))}>
+              {item.latest_notification.action_name}
+            </span>
+            <span className="truncate text-secondary">{item.latest_notification.shape_name}</span>
+          </>
+        ) : (
+          <span className="text-muted">暂无可交易信号</span>
+        )}
+      </div>
+    </article>
+  )
+}
