@@ -425,6 +425,8 @@ class ClickHouseProvider:
                    open, high, low, change_value, change_percentage, volume, turnover
             FROM {self._table("lb_realtime_quotes")}
             WHERE symbol IN {_symbols_sql(symbols)}
+              AND snapshot_minute >= now('Asia/Shanghai') - INTERVAL 1 DAY
+              AND snapshot_minute <= now('Asia/Shanghai')
             ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
             LIMIT 1 BY symbol
         """

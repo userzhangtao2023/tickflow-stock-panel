@@ -426,9 +426,16 @@ def test_strict_realtime_keeps_fresh_us_quote_across_shanghai_midnight() -> None
     strict_quote_time = datetime.fromtimestamp(strict_rows[0]["timestamp"] / 1000, tz=UTC)
     assert strict_rows[0]["timestamp"] == int(expected.timestamp() * 1000)
     assert shanghai_now.astimezone(UTC) - strict_quote_time == timedelta(seconds=80)
+    assert "snapshot_minute >= now('Asia/Shanghai') - INTERVAL 1 DAY" in queries[0]
+    assert "snapshot_minute <= now('Asia/Shanghai')" in queries[0]
     assert "toStartOfDay(now('Asia/Shanghai'))" not in queries[0]
     assert "WHERE symbol IN ('AAPL.US')" in queries[0]
     assert legacy_rows == []
+    assert "snapshot_minute >= toStartOfDay(now('Asia/Shanghai'))" in queries[1]
+    assert (
+        "snapshot_minute < toStartOfDay(now('Asia/Shanghai')) + INTERVAL 1 DAY"
+        in queries[1]
+    )
     assert "toStartOfDay(now('Asia/Shanghai'))" in queries[1]
 
 
