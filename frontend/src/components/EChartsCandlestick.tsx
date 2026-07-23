@@ -45,11 +45,15 @@ export interface ChartRange {
 }
 
 export interface ChartPriceLine {
+  id?: string
   value: number
+  endValue?: number
   label?: string
   color?: string
   start?: string
   end?: string
+  lineType?: 'solid' | 'dashed' | 'dotted'
+  width?: number
 }
 
 export interface StockInfo {
@@ -600,8 +604,8 @@ function buildOption(
     .map(line => {
       const lineStyle = {
         color: line.color ?? CT().text,
-        type: 'dashed' as const,
-        width: 1,
+        type: line.lineType ?? 'dashed',
+        width: line.width ?? 1,
         opacity: 0.92,
       }
       const label = {
@@ -618,7 +622,13 @@ function buildOption(
       if (line.start && line.end && dateIndexMap.has(line.start) && dateIndexMap.has(line.end)) {
         return [
           { xAxis: line.start, yAxis: line.value },
-          { xAxis: line.end, yAxis: line.value, lineStyle, label, symbol: 'none' },
+          {
+            xAxis: line.end,
+            yAxis: Number.isFinite(line.endValue) ? line.endValue : line.value,
+            lineStyle,
+            label,
+            symbol: 'none',
+          },
         ]
       }
       return { yAxis: line.value, lineStyle, label, symbol: 'none' }

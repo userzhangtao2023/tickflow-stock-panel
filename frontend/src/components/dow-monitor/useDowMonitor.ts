@@ -36,10 +36,15 @@ export function useDowMonitorStatus() {
   })
 }
 
-export function useDowMonitorDetail(symbol: string, timeframe: DowTimeframe) {
+export function useDowMonitorDetail(
+  symbol: string,
+  timeframe: DowTimeframe,
+  enabled = true,
+) {
   return useQuery({
     queryKey: QK.dowMonitorDetail(symbol, timeframe),
     queryFn: () => api.dowMonitorDetail(symbol, timeframe),
+    enabled: enabled && !!symbol,
     refetchInterval: POLL_INTERVAL_MS,
     placeholderData: keepPreviousData,
   })

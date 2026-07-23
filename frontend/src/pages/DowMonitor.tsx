@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { MarketFilterTabs } from '@/components/MarketFilterTabs'
 import { PageHeader } from '@/components/PageHeader'
 import { DowMonitorCard } from '@/components/dow-monitor/DowMonitorCard'
+import { DowMonitorDetailDialog } from '@/components/dow-monitor/DowMonitorDetailDialog'
 import { DowMonitorSignalRail } from '@/components/dow-monitor/DowMonitorSignalRail'
 import { formatServerTimestamp } from '@/components/dow-monitor/formatServerTimestamp'
 import type {
@@ -65,7 +66,7 @@ function filterNotifications(
 }
 
 export function DowMonitor({
-  onOpen = () => undefined,
+  onOpen,
 }: {
   onOpen?: (symbol: string, timeframe: DowTimeframe) => void
 }) {
@@ -78,6 +79,8 @@ export function DowMonitor({
   const [toggleErrors, setToggleErrors] = useState<Set<string>>(() => new Set())
   const [removeErrors, setRemoveErrors] = useState<Set<string>>(() => new Set())
   const [readErrors, setReadErrors] = useState<Map<string, string>>(() => new Map())
+  const [detail, setDetail] = useState<{ symbol: string; timeframe: DowTimeframe } | null>(null)
+  const detailScrollPosition = useRef(0)
   const overview = useDowMonitorOverview(market)
   const notificationQuery = useDowNotifications(market)
   const status = useDowMonitorStatus()
@@ -217,6 +220,20 @@ export function DowMonitor({
     }
   }
 
+  const openDetail = (symbol: string, timeframe: DowTimeframe) => {
+    if (onOpen) {
+      onOpen(symbol, timeframe)
+      return
+    }
+    detailScrollPosition.current = window.scrollY
+    setDetail({ symbol, timeframe })
+  }
+
+  const closeDetail = () => {
+    setDetail(null)
+    window.scrollTo({ top: detailScrollPosition.current, behavior: 'auto' })
+  }
+
   return (
     <div className="min-h-full bg-base">
       <PageHeader
@@ -310,7 +327,7 @@ export function DowMonitor({
                 quoteReady={backendReady}
                 togglePending={pendingToggles.has(item.symbol)}
                 removePending={pendingRemovals.has(item.symbol)}
-                onOpen={onOpen}
+                onOpen={openDetail}
                 onToggle={beginToggle}
                 onRemove={beginRemove}
               />
@@ -318,6 +335,14 @@ export function DowMonitor({
           </div>
         )}
       </main>
+      {detail && (
+        <DowMonitorDetailDialog
+          symbol={detail.symbol}
+          timeframe={detail.timeframe}
+          open
+          onClose={closeDetail}
+        />
+      )}
     </div>
   )
 }

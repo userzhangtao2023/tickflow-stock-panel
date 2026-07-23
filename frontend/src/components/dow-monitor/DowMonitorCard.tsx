@@ -213,7 +213,7 @@ export function DowMonitorCard({
 
       <button
         type="button"
-        aria-label={`打开 ${item.symbol} 详情`}
+        aria-label={`打开 ${item.symbol} 完整K线`}
         onClick={() => onOpen(item.symbol, timeframe)}
         className="block w-full border-y border-border/50 px-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
       >

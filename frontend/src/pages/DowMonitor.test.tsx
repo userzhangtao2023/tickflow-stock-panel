@@ -431,7 +431,7 @@ describe('Dow monitor page', () => {
     expect(within(hongKongCard).getByTestId('mini-chart-01347.HK-15m')).toBeInTheDocument()
     expect(within(unitedStatesCard).getByTestId('mini-chart-INTC.US-5m')).toBeInTheDocument()
 
-    await user.click(within(hongKongCard).getByRole('button', { name: '打开 01347.HK 详情' }))
+    await user.click(within(hongKongCard).getByRole('button', { name: '打开 01347.HK 完整K线' }))
     expect(onOpen).toHaveBeenCalledWith('01347.HK', '15m')
   })
 
@@ -744,7 +744,7 @@ describe('Dow monitor page', () => {
       expect(onOpen).not.toHaveBeenCalled()
     }
 
-    const open = within(card).getByRole('button', { name: '打开 01347.HK 详情' })
+    const open = within(card).getByRole('button', { name: '打开 01347.HK 完整K线' })
     open.focus()
     await user.keyboard('{Enter}')
     expect(onOpen).toHaveBeenCalledWith('01347.HK', '15m')
