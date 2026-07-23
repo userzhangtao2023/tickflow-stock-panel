@@ -4,6 +4,7 @@ import { MarketFilterTabs } from '@/components/MarketFilterTabs'
 import { PageHeader } from '@/components/PageHeader'
 import { DowMonitorCard } from '@/components/dow-monitor/DowMonitorCard'
 import { DowMonitorSignalRail } from '@/components/dow-monitor/DowMonitorSignalRail'
+import { formatServerTimestamp } from '@/components/dow-monitor/formatServerTimestamp'
 import type {
   DowMonitorMarket,
   DowMonitorNotification,
@@ -71,6 +72,12 @@ export function DowMonitor({
   const [market, setMarket] = useState<DowMonitorMarket>('all')
   const [signal, setSignal] = useState<SignalFilter>('all')
   const [symbolInput, setSymbolInput] = useState('')
+  const [pendingToggles, setPendingToggles] = useState<Set<string>>(() => new Set())
+  const [pendingRemovals, setPendingRemovals] = useState<Set<string>>(() => new Set())
+  const [pendingReads, setPendingReads] = useState<Set<string>>(() => new Set())
+  const [toggleErrors, setToggleErrors] = useState<Set<string>>(() => new Set())
+  const [removeErrors, setRemoveErrors] = useState<Set<string>>(() => new Set())
+  const [readErrors, setReadErrors] = useState<Map<string, string>>(() => new Map())
   const overview = useDowMonitorOverview(market)
   const notificationQuery = useDowNotifications(market)
   const status = useDowMonitorStatus()
@@ -90,11 +97,21 @@ export function DowMonitor({
     [market, notifications, signal],
   )
 
+  const backendReady = Boolean(
+    !status.isLoading
+    && !status.isError
+    && status.data?.running
+    && status.data.last_completed_at
+    && status.data.last_success_at,
+  )
   const connectivityIssues: string[] = []
   if (status.isLoading) connectivityIssues.push('正在连接监控服务')
   else if (status.isError) connectivityIssues.push('监控服务连接失败')
   else if (!status.data) connectivityIssues.push('监控服务状态不可用')
   else if (!status.data.running) connectivityIssues.push('后台监控未运行')
+  else if (!status.data.last_completed_at || !status.data.last_success_at) {
+    connectivityIssues.push('等待后台首轮监控结果')
+  }
   if (overview.isLoading) connectivityIssues.push('监控状态加载中')
   if (overview.isError) connectivityIssues.push('监控状态连接失败')
   if (notificationQuery.isLoading) connectivityIssues.push('通知加载中')
@@ -102,9 +119,15 @@ export function DowMonitor({
 
   const mutationIssues: string[] = []
   if (addSymbol.isError) mutationIssues.push('添加失败，请重试')
-  if (removeSymbol.isError) mutationIssues.push('移除失败，请重试')
-  if (setEnabled.isError) mutationIssues.push('监控开关更新失败，请重试')
-  if (markRead.isError) mutationIssues.push('标记已读失败，请重试')
+  for (const symbol of toggleErrors) {
+    mutationIssues.push(`${symbol} 监控开关更新失败，请重试`)
+  }
+  for (const symbol of removeErrors) {
+    mutationIssues.push(`移除 ${symbol} 失败，请重试`)
+  }
+  for (const symbol of readErrors.values()) {
+    mutationIssues.push(`标记 ${symbol} 已读失败，请重试`)
+  }
   const visibleIssues = [...connectivityIssues, ...mutationIssues]
   const forceBlocked = connectivityIssues.length > 0
 
@@ -117,18 +140,82 @@ export function DowMonitor({
     )
   }
 
-  const statusLabel = status.isLoading
-    ? '后台状态加载中'
-    : status.data?.running
-      ? '后台运行中'
-      : '后台未运行'
+  let statusLabel = '后台状态未知'
+  if (status.isLoading) statusLabel = '后台状态加载中'
+  else if (status.isError) statusLabel = '后台连接失败'
+  else if (!status.data) statusLabel = '后台状态未知'
+  else if (!status.data.running) statusLabel = '后台未运行'
+  else if (!backendReady) statusLabel = '后台准备中'
+  else statusLabel = '后台运行中'
+  const sourceTime = formatServerTimestamp(overview.data?.source_timestamp)
   const sourceLabel = (
-    status.isLoading
-    || status.isError
+    !backendReady
     || !overview.data?.source
   )
     ? '数据源不可用'
-    : `数据源 ${overview.data.source}`
+    : `数据源 ${overview.data.source}${sourceTime ? ` · 源 ${sourceTime}` : ''}`
+
+  const beginToggle = async (symbol: string, enabled: boolean) => {
+    setPendingToggles(current => new Set(current).add(symbol))
+    setToggleErrors(current => {
+      const next = new Set(current)
+      next.delete(symbol)
+      return next
+    })
+    try {
+      await setEnabled.mutateAsync({ symbol, enabled })
+    } catch {
+      setToggleErrors(current => new Set(current).add(symbol))
+    } finally {
+      setPendingToggles(current => {
+        const next = new Set(current)
+        next.delete(symbol)
+        return next
+      })
+    }
+  }
+
+  const beginRemove = async (symbol: string) => {
+    setPendingRemovals(current => new Set(current).add(symbol))
+    setRemoveErrors(current => {
+      const next = new Set(current)
+      next.delete(symbol)
+      return next
+    })
+    try {
+      await removeSymbol.mutateAsync(symbol)
+    } catch {
+      setRemoveErrors(current => new Set(current).add(symbol))
+    } finally {
+      setPendingRemovals(current => {
+        const next = new Set(current)
+        next.delete(symbol)
+        return next
+      })
+    }
+  }
+
+  const beginRead = async (notificationId: string) => {
+    const notification = notifications.find(item => item.notification_id === notificationId)
+    const symbol = notification?.symbol ?? notificationId
+    setPendingReads(current => new Set(current).add(notificationId))
+    setReadErrors(current => {
+      const next = new Map(current)
+      next.delete(notificationId)
+      return next
+    })
+    try {
+      await markRead.mutateAsync(notificationId)
+    } catch {
+      setReadErrors(current => new Map(current).set(notificationId, symbol))
+    } finally {
+      setPendingReads(current => {
+        const next = new Set(current)
+        next.delete(notificationId)
+        return next
+      })
+    }
+  }
 
   return (
     <div className="min-h-full bg-base">
@@ -175,8 +262,8 @@ export function DowMonitor({
         notifications={filteredNotifications}
         loading={notificationQuery.isLoading}
         error={notificationQuery.isError}
-        onRead={notificationId => markRead.mutate(notificationId)}
-        readPendingId={markRead.isPending ? markRead.variables : undefined}
+        onRead={beginRead}
+        readPendingIds={pendingReads}
       />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-5">
@@ -220,13 +307,12 @@ export function DowMonitor({
                 item={item}
                 forceBlocked={forceBlocked}
                 blockedReason={connectivityIssues[0]}
-                togglePending={
-                  setEnabled.isPending && setEnabled.variables?.symbol === item.symbol
-                }
-                removePending={removeSymbol.isPending && removeSymbol.variables === item.symbol}
+                quoteReady={backendReady}
+                togglePending={pendingToggles.has(item.symbol)}
+                removePending={pendingRemovals.has(item.symbol)}
                 onOpen={onOpen}
-                onToggle={(symbol, enabled) => setEnabled.mutate({ symbol, enabled })}
-                onRemove={symbol => removeSymbol.mutate(symbol)}
+                onToggle={beginToggle}
+                onRemove={beginRemove}
               />
             ))}
           </div>

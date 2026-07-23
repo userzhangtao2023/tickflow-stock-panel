@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -46,9 +46,21 @@ vi.mock('@/components/dow-monitor/useDowMonitor', () => ({
   useDowMonitorStatus: () => hooks.status,
   useDowNotifications: () => hooks.notifications,
   useAddDowMonitorSymbol: () => ({ mutate: hooks.add, ...hooks.addState }),
-  useMarkDowNotificationRead: () => ({ mutate: hooks.markRead, ...hooks.readState }),
-  useRemoveDowMonitorSymbol: () => ({ mutate: hooks.remove, ...hooks.removeState }),
-  useSetDowMonitorEnabled: () => ({ mutate: hooks.setEnabled, ...hooks.toggleState }),
+  useMarkDowNotificationRead: () => ({
+    mutate: hooks.markRead,
+    mutateAsync: hooks.markRead,
+    ...hooks.readState,
+  }),
+  useRemoveDowMonitorSymbol: () => ({
+    mutate: hooks.remove,
+    mutateAsync: hooks.remove,
+    ...hooks.removeState,
+  }),
+  useSetDowMonitorEnabled: () => ({
+    mutate: hooks.setEnabled,
+    mutateAsync: hooks.setEnabled,
+    ...hooks.toggleState,
+  }),
 }))
 
 vi.mock('echarts', () => ({
@@ -244,12 +256,25 @@ const overview: DowMonitorOverviewResponse = {
 
 const notifications = [hkNotification, usNotification]
 
+function deferred<T = unknown>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, reject, resolve }
+}
+
 beforeEach(() => {
   hooks.add.mockReset()
   hooks.markRead.mockReset()
   hooks.remove.mockReset()
   hooks.setEnabled.mockReset()
   hooks.add.mockImplementation((_variables, options) => options?.onSuccess?.())
+  hooks.markRead.mockResolvedValue(undefined)
+  hooks.remove.mockResolvedValue(undefined)
+  hooks.setEnabled.mockResolvedValue(undefined)
   chartMocks.disconnect.mockReset()
   chartMocks.dispose.mockReset()
   chartMocks.init.mockReset()
@@ -330,6 +355,9 @@ describe('Dow monitor page', () => {
     expect(within(named).getByText('13.47')).toBeInTheDocument()
     expect(within(named).getByText('+1.25%')).toBeInTheDocument()
     expect(within(named).queryByText('+5.77%')).not.toBeInTheDocument()
+    expect(within(named).getByText('行情 2026-03-29 02:51Z')).toBeVisible()
+    expect(within(named).getByText('成功 2026-07-23 01:05Z')).toBeVisible()
+    expect(screen.getByText('数据源 webstock · 源 2026-07-23 01:05Z')).toBeVisible()
 
     const unnamed = screen.getByTestId('card-INTC.US')
     expect(within(unnamed).getAllByText('INTC.US')).toHaveLength(1)
@@ -488,28 +516,109 @@ describe('Dow monitor page', () => {
     expect(screen.getByText('数据源不可用')).toBeInTheDocument()
   })
 
+  it('blocks retained LIVE quotes until the restarted backend completes one successful cycle', () => {
+    hooks.status = {
+      data: {
+        ...(hooks.status.data as object),
+        running: true,
+        last_completed_at: null,
+        last_success_at: null,
+      },
+      isError: false,
+      isLoading: false,
+    }
+    const { rerender } = render(<DowMonitor />)
+    const card = screen.getByTestId('card-01347.HK')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('等待后台首轮监控结果')
+    expect(screen.getByText('5 只 · 后台准备中')).toBeInTheDocument()
+    expect(card).toHaveAttribute('data-tradable', 'false')
+    expect(within(card).queryByText('13.47')).not.toBeInTheDocument()
+    expect(within(card).getByText('—')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: '5分' })).toHaveClass('text-muted')
+
+    hooks.status = {
+      data: {
+        ...(hooks.status.data as object),
+        running: true,
+        last_completed_at: '2026-07-23T01:05:00Z',
+        last_success_at: '2026-07-23T01:05:00Z',
+        last_error: 'an older isolated symbol failure',
+      },
+      isError: false,
+      isLoading: false,
+    }
+    rerender(<DowMonitor />)
+
+    expect(screen.queryByText('等待后台首轮监控结果')).not.toBeInTheDocument()
+    expect(screen.getByText('5 只 · 后台运行中')).toBeInTheDocument()
+    expect(card).toHaveAttribute('data-tradable', 'true')
+    expect(within(card).getByText('13.47')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: '5分' })).toHaveClass(
+      'text-emerald-400',
+    )
+  })
+
+  it('uses unknown or connection-failed status labels without a running contradiction', () => {
+    hooks.status = {
+      data: hooks.status.data,
+      isError: true,
+      isLoading: false,
+    }
+    const { rerender } = render(<DowMonitor />)
+
+    expect(screen.getByText('5 只 · 后台连接失败')).toBeInTheDocument()
+    expect(screen.queryByText('5 只 · 后台运行中')).not.toBeInTheDocument()
+    expect(screen.getByTestId('card-01347.HK')).toHaveAttribute('data-tradable', 'false')
+
+    hooks.status = { data: undefined, isError: false, isLoading: false }
+    rerender(<DowMonitor />)
+    expect(screen.getByText('5 只 · 后台状态未知')).toBeInTheDocument()
+    expect(screen.queryByText('5 只 · 后台未运行')).not.toBeInTheDocument()
+  })
+
   it('keeps failed mutations visible and retryable, clearing add input only on success', async () => {
     const user = userEvent.setup()
     hooks.addState = { isError: true, isPending: false, error: new Error('add failed') }
-    hooks.removeState = { isError: true, isPending: false, error: new Error('remove failed') }
-    hooks.toggleState = { isError: true, isPending: false, error: new Error('toggle failed') }
-    hooks.readState = { isError: true, isPending: false, error: new Error('read failed') }
     hooks.add.mockImplementation(() => undefined)
+    hooks.setEnabled.mockRejectedValueOnce(new Error('toggle failed'))
+    hooks.remove.mockRejectedValueOnce(new Error('remove failed'))
+    hooks.markRead.mockRejectedValueOnce(new Error('read failed'))
     const { rerender } = render(<DowMonitor />)
 
     expect(screen.getByRole('alert')).toHaveTextContent('添加失败，请重试')
-    expect(screen.getByRole('alert')).toHaveTextContent('移除失败，请重试')
-    expect(screen.getByRole('alert')).toHaveTextContent('监控开关更新失败，请重试')
-    expect(screen.getByRole('alert')).toHaveTextContent('标记已读失败，请重试')
 
     const input = screen.getByRole('textbox', { name: '股票代码' })
     await user.type(input, 'aapl.us')
     await user.click(screen.getByRole('button', { name: '添加' }))
     expect(input).toHaveValue('aapl.us')
+
+    await user.click(screen.getByRole('switch', { name: '01347.HK 监控开关' }))
+    await user.click(screen.getByRole('button', { name: '移除 INTC.US' }))
+    await user.click(screen.getByRole('button', { name: '标记 01347.HK 已读' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '01347.HK 监控开关更新失败，请重试',
+      )
+      expect(screen.getByRole('alert')).toHaveTextContent('移除 INTC.US 失败，请重试')
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '标记 01347.HK 已读失败，请重试',
+      )
+    })
     expect(screen.getByRole('button', { name: '添加' })).not.toBeDisabled()
     expect(screen.getByRole('switch', { name: '01347.HK 监控开关' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '移除 INTC.US' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '标记 01347.HK 已读' })).not.toBeDisabled()
+
+    await user.click(screen.getByRole('switch', { name: '01347.HK 监控开关' }))
+    await user.click(screen.getByRole('button', { name: '移除 INTC.US' }))
+    await user.click(screen.getByRole('button', { name: '标记 01347.HK 已读' }))
+    await waitFor(() => {
+      expect(hooks.setEnabled).toHaveBeenCalledTimes(2)
+      expect(hooks.remove).toHaveBeenCalledTimes(2)
+      expect(hooks.markRead).toHaveBeenCalledTimes(2)
+    })
 
     hooks.addState = { isError: false, isPending: false }
     hooks.add.mockImplementation((_variables, options) => options?.onSuccess?.())
@@ -518,31 +627,103 @@ describe('Dow monitor page', () => {
     expect(input).toHaveValue('')
   })
 
-  it('keeps pending mutation controls explicit and scoped', () => {
+  it('keeps add pending explicit without serializing stock controls', () => {
     hooks.addState = { isError: false, isPending: true }
-    hooks.toggleState = {
-      isError: false,
-      isPending: true,
-      variables: { symbol: '01347.HK', enabled: false },
-    }
-    hooks.removeState = {
-      isError: false,
-      isPending: true,
-      variables: 'INTC.US',
-    }
-    hooks.readState = {
-      isError: false,
-      isPending: true,
-      variables: hkNotification.notification_id,
-    }
 
     render(<DowMonitor />)
 
     expect(screen.getByRole('button', { name: '添加中' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: '01347.HK 监控开关' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: '01347.HK 监控开关' })).not.toBeDisabled()
     expect(screen.getByRole('switch', { name: 'INTC.US 监控开关' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: '移除 INTC.US' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '标记 01347.HK 已读' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '移除 INTC.US' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: '标记 01347.HK 已读' })).not.toBeDisabled()
+  })
+
+  it('tracks concurrent toggle pending and errors per symbol in reverse settlement order', async () => {
+    const user = userEvent.setup()
+    const first = deferred()
+    const second = deferred()
+    hooks.setEnabled
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    render(<DowMonitor />)
+    const hk = screen.getByRole('switch', { name: '01347.HK 监控开关' })
+    const us = screen.getByRole('switch', { name: 'INTC.US 监控开关' })
+
+    await user.click(hk)
+    await user.click(us)
+    expect(hk).toBeDisabled()
+    expect(us).toBeDisabled()
+
+    act(() => second.reject(new Error('US failed')))
+    await waitFor(() => expect(us).not.toBeDisabled())
+    expect(hk).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'INTC.US 监控开关更新失败，请重试',
+    )
+
+    act(() => first.resolve(undefined))
+    await waitFor(() => expect(hk).not.toBeDisabled())
+    expect(us).not.toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'INTC.US 监控开关更新失败，请重试',
+    )
+  })
+
+  it('tracks concurrent removals per symbol when the second settles first', async () => {
+    const user = userEvent.setup()
+    const first = deferred()
+    const second = deferred()
+    hooks.remove
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    render(<DowMonitor />)
+    const hk = screen.getByRole('button', { name: '移除 01347.HK' })
+    const us = screen.getByRole('button', { name: '移除 INTC.US' })
+
+    await user.click(hk)
+    await user.click(us)
+    expect(hk).toBeDisabled()
+    expect(us).toBeDisabled()
+
+    act(() => second.resolve(undefined))
+    await waitFor(() => expect(us).not.toBeDisabled())
+    expect(hk).toBeDisabled()
+
+    act(() => first.reject(new Error('HK failed')))
+    await waitFor(() => expect(hk).not.toBeDisabled())
+    expect(us).not.toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '移除 01347.HK 失败，请重试',
+    )
+  })
+
+  it('tracks concurrent notification reads by id without serializing the rail', async () => {
+    const user = userEvent.setup()
+    const first = deferred()
+    const second = deferred()
+    hooks.markRead
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    render(<DowMonitor />)
+    const hk = screen.getByRole('button', { name: '标记 01347.HK 已读' })
+    const us = screen.getByRole('button', { name: '标记 INTC.US 已读' })
+
+    await user.click(hk)
+    await user.click(us)
+    expect(hk).toBeDisabled()
+    expect(us).toBeDisabled()
+
+    act(() => second.reject(new Error('US failed')))
+    await waitFor(() => expect(us).not.toBeDisabled())
+    expect(hk).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '标记 INTC.US 已读失败，请重试',
+    )
+
+    act(() => first.resolve(undefined))
+    await waitFor(() => expect(hk).not.toBeDisabled())
+    expect(us).not.toBeDisabled()
   })
 
   it('uses a dedicated detail control and never opens from nested keyboard actions', async () => {

@@ -13,13 +13,13 @@ export function DowMonitorSignalRail({
   loading = false,
   error = false,
   onRead,
-  readPendingId,
+  readPendingIds,
 }: {
   notifications: DowMonitorNotification[]
   loading?: boolean
   error?: boolean
   onRead?: (notificationId: string) => void
-  readPendingId?: string
+  readPendingIds?: ReadonlySet<string>
 }) {
   return (
     <section
@@ -52,7 +52,7 @@ export function DowMonitorSignalRail({
                 <button
                   type="button"
                   aria-label={`标记 ${notification.symbol} 已读`}
-                  disabled={readPendingId === notification.notification_id}
+                  disabled={readPendingIds?.has(notification.notification_id)}
                   onClick={() => onRead(notification.notification_id)}
                   className="ml-auto shrink-0 rounded border border-current/30 px-1 py-0.5 text-[10px] disabled:cursor-wait disabled:opacity-50"
                 >

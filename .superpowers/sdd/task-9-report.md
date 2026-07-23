@@ -251,3 +251,92 @@ of lower-layer semantics.
 - `frontend/src/components/dow-monitor/useDowMonitor.ts`
 - `frontend/src/components/dow-monitor/useDowMonitor.test.tsx`
 - `frontend/src/lib/queryKeys.ts`
+
+---
+
+## Second review remediation addendum
+
+The second review found two important concurrency/readiness gaps and two minor
+truthfulness/visibility gaps. This pass changes frontend consumers only; the
+existing status and overview contracts already contain every required server
+field.
+
+### Readiness and visible server freshness
+
+- `running=true` no longer unlocks retained cards by itself. The status query
+  must be present, non-loading, non-error, running, and contain both
+  `last_completed_at` and `last_success_at`.
+- A restarted backend that has not completed one successful cycle shows
+  `后台准备中` plus `等待后台首轮监控结果`. Retained cards and every timeframe
+  remain neutral/blocked, and retained price/change are replaced by `—`.
+- Once both cycle timestamps arrive, each card is again eligible according to
+  its own backend `freshness_state`, enabled state, and per-symbol state.
+  A populated status `last_error` does not globally block otherwise ready
+  symbols when a successful completed cycle exists.
+- Loading, failed, absent, stopped, preparing, and running status labels are
+  mutually consistent. In particular, failed and absent queries show
+  `后台连接失败` and `后台状态未知`, never a retained running/stopped claim.
+- The sighted UI now renders compact UTC labels directly from server fields:
+  card `quote_timestamp`, card `last_success_at`, and overview
+  `source_timestamp`. Formatting is deterministic and never compares against
+  browser current time.
+
+### Concurrent mutation ownership
+
+Toggle, remove, and mark-read operations now use component-owned pending sets
+and error sets/maps keyed by symbol or notification ID. Each call awaits its
+own `mutateAsync` Promise, so a later mutation cannot replace the completion
+observer for an earlier mutation.
+
+Executable tests start A then B and settle them in reverse order for all three
+mutation families. They prove:
+
+- both records can be pending concurrently;
+- B can settle and re-enable without re-enabling unresolved A;
+- a B failure stays visible after A later succeeds;
+- failures identify the affected record and remain retryable;
+- an add request still owns only its single input/button and does not serialize
+  unrelated stock controls.
+
+### Second-pass RED/GREEN evidence
+
+The expanded focused suite first reported 8 failures out of 24. Failures
+directly covered the missing first-cycle readiness gate, contradictory status
+label, hidden server timestamps, missing per-call mutation settlement API, and
+non-independent pending controls.
+
+Final observed commands:
+
+```powershell
+cd frontend
+pnpm test --run src/pages/DowMonitor.test.tsx
+# 24 passed
+
+pnpm test --run
+# 85 passed across 23 files
+
+pnpm build
+# TypeScript and Vite build passed
+
+cd ..
+.\backend\.venv\Scripts\python.exe scripts\check_spec_compliance.py
+# Specification compliance passed
+
+git diff --check
+# passed
+```
+
+The production build retains the existing large-chunk warning. The complete
+suite retains the existing React Router v7 future-flag warnings.
+
+### Independent second-pass requirements-to-evidence review
+
+| Active requirement | Implementation evidence | Executable evidence | Review conclusion |
+| --- | --- | --- | --- |
+| `REQ-DOW-WATCH-UI-001` | `DowMonitor.tsx`, `DowMonitorCard.tsx`, `formatServerTimestamp.ts` | restart-not-ready, status-label and exact visible timestamp assertions | Retained data cannot present a live quote/action header before the new backend process has completed a successful cycle; all displayed freshness times originate from the server. |
+| `REQ-DOW-WATCH-BACKGROUND-001` | `DowMonitor.tsx` | running-with-null-cycle versus completed-success rerender test | Runtime readiness requires an observed successful completed cycle, not the process task's running flag alone. |
+| `REQ-DOW-WATCH-STALE-001` | `DowMonitor.tsx`, `DowMonitorCard.tsx` | global first-cycle blocking followed by per-state eligibility test | The frontend adds only an operational readiness gate. It does not calculate freshness from browser time or override lower-layer per-symbol freshness states. |
+| `REQ-DOW-WATCH-FILTER-001` / mutation isolation | `DowMonitor.tsx`, `DowMonitorSignalRail.tsx` | reverse-settlement toggle, removal and read tests | Pending and failure state is keyed by the affected record and backed by each call's own Promise; unrelated stocks remain independently actionable. |
+
+The reviewed diff contains no backend, detail-dialog, navigation, scheduling, or
+lower-layer DOW semantic changes.

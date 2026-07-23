@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { cn } from '@/lib/cn'
 
 import { DowMiniChart, getLatestValidDowSignalSide } from './DowMiniChart'
+import { formatServerTimestamp } from './formatServerTimestamp'
 import type {
   DowMonitorOverviewSymbol,
   DowMonitorTimeframeState,
@@ -83,6 +84,7 @@ export function DowMonitorCard({
   onRemove,
   forceBlocked = false,
   blockedReason,
+  quoteReady = true,
   togglePending = false,
   removePending = false,
 }: {
@@ -92,21 +94,28 @@ export function DowMonitorCard({
   onRemove: (symbol: string) => void
   forceBlocked?: boolean
   blockedReason?: string
+  quoteReady?: boolean
   togglePending?: boolean
   removePending?: boolean
 }) {
   const [timeframe, setTimeframe] = useState<DowTimeframe>('5m')
   const selectedState = item.states[timeframe]
   const blocked = blockedLabel(item, selectedState, forceBlocked, blockedReason)
-  const price = typeof item.last_price === 'number' && Number.isFinite(item.last_price)
+  const price = quoteReady
+    && typeof item.last_price === 'number'
+    && Number.isFinite(item.last_price)
     ? item.last_price
     : null
-  const change = typeof item.change_pct === 'number' && Number.isFinite(item.change_pct)
+  const change = quoteReady
+    && typeof item.change_pct === 'number'
+    && Number.isFinite(item.change_pct)
     ? item.change_pct * 100
     : null
   const name = typeof item.name === 'string' && item.name.trim() && item.name.trim() !== item.symbol
     ? item.name.trim()
     : null
+  const quoteTime = quoteReady ? formatServerTimestamp(item.quote_timestamp) : null
+  const successTime = quoteReady ? formatServerTimestamp(item.last_success_at) : null
 
   return (
     <article
@@ -137,10 +146,13 @@ export function DowMonitorCard({
                 {change > 0 ? '+' : ''}{change.toFixed(2)}%
               </span>
             )}
-            {item.quote_timestamp != null && (
-              <span className="sr-only">报价时间 {String(item.quote_timestamp)}</span>
-            )}
           </div>
+          {(quoteTime || successTime) && (
+            <div className="mt-0.5 flex gap-2 font-mono text-[9px] text-muted">
+              {quoteTime && <span>行情 {quoteTime}</span>}
+              {successTime && <span>成功 {successTime}</span>}
+            </div>
+          )}
         </div>
 
         <button
