@@ -11,7 +11,12 @@ import polars as pl
 import pytest
 
 from app.services.dow_monitor_client import DowEngineResult, DowEngineUnavailable
-from app.services.dow_monitor_data import SymbolFreshness, WebStockBatch
+from app.services.dow_monitor_data import (
+    SymbolFreshness,
+    WebStockBatch,
+    WebStockHistory,
+    WebStockHistoryCoverage,
+)
 from app.services.dow_monitor_models import DowNotification, DowTimeframeState
 from app.services.dow_monitor_service import DowMonitorService
 from app.services.dow_monitor_store import DowMonitorStore
@@ -106,20 +111,53 @@ def _batch(
 
 
 class FakeGateway:
-    def __init__(self, batch: WebStockBatch | Exception) -> None:
-        self.batch = batch
-        self.calls: list[tuple[list[str], datetime, datetime]] = []
-
-    def fetch(
+    def __init__(
         self,
-        symbols: list[str],
-        start: datetime,
+        batch: WebStockBatch | Exception,
+        history: WebStockHistory | Exception | None = None,
+    ) -> None:
+        self.batch = batch
+        self.history = history
+        self.calls: list[tuple[dict[str, datetime], datetime]] = []
+        self.history_calls: list[tuple[list[str], datetime]] = []
+
+    def fetch_since(
+        self,
+        starts_by_symbol: dict[str, datetime],
         end: datetime,
     ) -> WebStockBatch:
-        self.calls.append((symbols, start, end))
+        self.calls.append((dict(starts_by_symbol), end))
         if isinstance(self.batch, Exception):
             raise self.batch
         return self.batch
+
+    def load_history(self, symbols: list[str], end: datetime) -> WebStockHistory:
+        self.history_calls.append((list(symbols), end))
+        if isinstance(self.history, Exception):
+            raise self.history
+        if self.history is not None:
+            return self.history
+        return _complete_history(symbols)
+
+
+def _complete_history(
+    symbols: list[str],
+    minute_rows: pl.DataFrame | None = None,
+) -> WebStockHistory:
+    return WebStockHistory(
+        minute_rows=minute_rows if minute_rows is not None else pl.DataFrame(),
+        coverage_by_symbol={
+            symbol: WebStockHistoryCoverage(
+                earliest_timestamp=None,
+                latest_timestamp=None,
+                latest_prior_session_date=date(2026, 7, 22),
+                latest_prior_session_complete=True,
+                state="COMPLETE",
+                reason=None,
+            )
+            for symbol in symbols
+        },
+    )
 
 
 def _engine_result(
@@ -280,6 +318,27 @@ def _service(
         now_fn=lambda: NOW,
     )
     return service, store, gateway, client
+
+
+def _seed_reliable_states(
+    store: DowMonitorStore,
+    symbol: str,
+    market: str,
+    source_timestamp: datetime,
+) -> None:
+    for timeframe in TIMEFRAMES:
+        store.save_state(
+            DowTimeframeState(
+                symbol=symbol,
+                market=market,
+                timeframe=timeframe,
+                freshness_state="LIVE",
+                source_timestamp=source_timestamp,
+                snapshot={"action_code": "WATCH", "line_id": None},
+                chart={"bars": [], "lines": [], "signals": []},
+                updated_at=source_timestamp,
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -588,8 +647,8 @@ async def test_restart_recovers_from_last_reliable_timestamp_without_duplicate_e
 
     await service.run_once()
 
-    assert gateway.calls[0][1] == reliable_at
-    assert gateway.calls[0][2] == NOW
+    assert gateway.calls[0][0]["01347.HK"] == reliable_at
+    assert gateway.calls[0][1] == NOW
     notices = [item for item in store.list_notifications() if item.timeframe == "30m"]
     assert [item.event_key for item in notices] == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
     assert store.get_state("01347.HK", "30m").freshness_state == "LIVE"
@@ -684,7 +743,10 @@ async def test_new_symbol_forces_full_history_cold_start_in_shared_batch(tmp_pat
 
     await service.run_once()
 
-    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
+    hk_midnight = datetime(2026, 7, 23, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+    assert gateway.calls[0][0]["01347.HK"] == hk_midnight.astimezone(UTC)
+    us_midnight = datetime(2026, 7, 22, tzinfo=ZoneInfo("America/New_York"))
+    assert gateway.calls[0][0]["INTC.US"] == us_midnight.astimezone(UTC)
 
 
 @pytest.mark.asyncio
@@ -703,8 +765,9 @@ async def test_incremental_recovery_merges_prior_context_without_duplicate_minut
         def __init__(self) -> None:
             self.calls = []
 
-        def fetch(self, symbols, start, end):
-            self.calls.append((symbols, start, end))
+        def fetch_since(self, starts_by_symbol, end):
+            self.calls.append((dict(starts_by_symbol), end))
+            start = starts_by_symbol["01347.HK"]
             visible = [value for value in all_minutes if start <= value <= end]
             return WebStockBatch(
                 quotes=[],
@@ -713,6 +776,9 @@ async def test_incremental_recovery_merges_prior_context_without_duplicate_minut
                 freshness_by_symbol={"01347.HK": SymbolFreshness(state="LIVE", reason=None)},
                 gap_details={"01347.HK": []},
             )
+
+        def load_history(self, symbols, end):
+            return _complete_history(symbols)
 
     store = DowMonitorStore(tmp_path)
     store.upsert_symbol("01347.HK", "hk", True)
@@ -730,7 +796,7 @@ async def test_incremental_recovery_merges_prior_context_without_duplicate_minut
     current_now = second_now
     await service.run_once()
 
-    assert gateway.calls[1][1] == first_now
+    assert gateway.calls[1][0]["01347.HK"] == first_now
     second_5m = next(bars for _, timeframe, bars in client.received[5:] if timeframe == "5m")
     timestamps = [bar["timestamp"] for bar in second_5m]
     assert timestamps[0].endswith("09:30:00+08:00")
@@ -751,7 +817,8 @@ async def test_timeframe_recovery_uses_its_own_cutoff_without_replaying_healthy_
     ]
 
     class RangeAwareGateway:
-        def fetch(self, symbols, start, end):
+        def fetch_since(self, starts_by_symbol, end):
+            start = starts_by_symbol["01347.HK"]
             visible = [value for value in all_minutes if start <= value <= end]
             return WebStockBatch(
                 quotes=[],
@@ -760,6 +827,9 @@ async def test_timeframe_recovery_uses_its_own_cutoff_without_replaying_healthy_
                 freshness_by_symbol={"01347.HK": SymbolFreshness(state="LIVE", reason=None)},
                 gap_details={"01347.HK": []},
             )
+
+        def load_history(self, symbols, end):
+            return _complete_history(symbols)
 
     store = DowMonitorStore(tmp_path)
     store.upsert_symbol("01347.HK", "hk", True)
@@ -802,7 +872,8 @@ async def test_empty_close_poll_finalizes_prior_forming_buckets_without_recounti
     ]
 
     class CloseGateway:
-        def fetch(self, symbols, start, end):
+        def fetch_since(self, starts_by_symbol, end):
+            start = starts_by_symbol["01347.HK"]
             visible = [value for value in all_minutes if start <= value <= end]
             return WebStockBatch(
                 quotes=[],
@@ -811,6 +882,9 @@ async def test_empty_close_poll_finalizes_prior_forming_buckets_without_recounti
                 freshness_by_symbol={"01347.HK": SymbolFreshness(state="LIVE", reason=None)},
                 gap_details={"01347.HK": []},
             )
+
+        def load_history(self, symbols, end):
+            return _complete_history(symbols)
 
     store = DowMonitorStore(tmp_path)
     store.upsert_symbol("01347.HK", "hk", True)
@@ -899,24 +973,38 @@ async def test_queries_expose_source_freshness_success_error_and_running(tmp_pat
 async def test_cold_start_keeps_t_minus_one_across_a_share_long_holiday(tmp_path) -> None:
     shanghai = ZoneInfo("Asia/Shanghai")
     current_now = datetime(2026, 10, 9, 10, 0, tzinfo=shanghai)
-    minutes = [
-        datetime(2026, 9, 30, 14, 59, tzinfo=shanghai),
-        datetime(2026, 10, 9, 9, 30, tzinfo=shanghai),
+    history_minutes = [
+        *(
+            datetime(2026, 9, 30, 9, 30, tzinfo=shanghai) + timedelta(minutes=offset)
+            for offset in range(120)
+        ),
+        *(
+            datetime(2026, 9, 30, 13, 0, tzinfo=shanghai) + timedelta(minutes=offset)
+            for offset in range(120)
+        ),
     ]
+    live_minutes = [datetime(2026, 10, 9, 9, 30, tzinfo=shanghai)]
 
     class HolidayGateway:
         def __init__(self) -> None:
             self.calls = []
+            self.history_calls = []
 
-        def fetch(self, symbols, start, end):
-            self.calls.append((symbols, start, end))
-            visible = [value for value in minutes if start <= value <= end]
+        def fetch_since(self, starts_by_symbol, end):
+            self.calls.append((dict(starts_by_symbol), end))
             return WebStockBatch(
                 quotes=[],
-                minute_rows=_minute_rows_from_values("600519.SH", visible),
-                source_timestamp=max(visible),
+                minute_rows=_minute_rows_from_values("600519.SH", live_minutes),
+                source_timestamp=max(live_minutes),
                 freshness_by_symbol={"600519.SH": SymbolFreshness(state="LIVE", reason=None)},
                 gap_details={"600519.SH": []},
+            )
+
+        def load_history(self, symbols, end):
+            self.history_calls.append((list(symbols), end))
+            return _complete_history(
+                symbols,
+                _minute_rows_from_values("600519.SH", history_minutes),
             )
 
     store = DowMonitorStore(tmp_path)
@@ -933,7 +1021,9 @@ async def test_cold_start_keeps_t_minus_one_across_a_share_long_holiday(tmp_path
 
     await service.run_once()
 
-    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
+    midnight = datetime(2026, 10, 9, tzinfo=shanghai).astimezone(UTC)
+    assert gateway.calls[0][0]["600519.SH"] == midnight
+    assert gateway.history_calls == [(["600519.SH"], current_now)]
     bars = next(bars for _, timeframe, bars in client.received if timeframe == "5m")
     assert bars[0]["timestamp"].startswith("2026-09-30")
     assert bars[-1]["timestamp"].startswith("2026-10-09")
@@ -967,16 +1057,23 @@ async def test_cold_start_preserves_intc_131_bar_30m_context(tmp_path) -> None:
     class IntcHistoryGateway:
         def __init__(self) -> None:
             self.calls = []
+            self.history_calls = []
 
-        def fetch(self, symbols, start, end):
-            self.calls.append((symbols, start, end))
-            visible = [value for value in minutes if start <= value <= end]
+        def fetch_since(self, starts_by_symbol, end):
+            self.calls.append((dict(starts_by_symbol), end))
             return WebStockBatch(
                 quotes=[],
-                minute_rows=_minute_rows_from_values("INTC.US", visible),
-                source_timestamp=max(visible),
+                minute_rows=pl.DataFrame(),
+                source_timestamp=current_now,
                 freshness_by_symbol={"INTC.US": SymbolFreshness(state="LIVE", reason=None)},
                 gap_details={"INTC.US": []},
+            )
+
+        def load_history(self, symbols, end):
+            self.history_calls.append((list(symbols), end))
+            return _complete_history(
+                symbols,
+                _minute_rows_from_values("INTC.US", minutes),
             )
 
     store = DowMonitorStore(tmp_path)
@@ -994,10 +1091,181 @@ async def test_cold_start_preserves_intc_131_bar_30m_context(tmp_path) -> None:
     await service.run_once()
 
     bars = next(bars for _, timeframe, bars in client.received if timeframe == "30m")
-    assert gateway.calls[0][1] == datetime(1970, 1, 1, tzinfo=UTC)
+    midnight = datetime(2026, 7, 22, tzinfo=new_york).astimezone(UTC)
+    assert gateway.calls[0][0]["INTC.US"] == midnight
+    assert gateway.history_calls == [(["INTC.US"], current_now)]
     assert len(bars) == 131
     assert bars[0]["timestamp"].startswith("2026-07-08")
     assert bars[-1]["timestamp"].startswith("2026-07-22")
+
+
+@pytest.mark.asyncio
+async def test_complete_latest_t_minus_one_allows_arbitrary_older_history_gaps(
+    tmp_path,
+) -> None:
+    hk = ZoneInfo("Asia/Hong_Kong")
+    history_rows = _minute_rows_from_values(
+        "01347.HK",
+        [
+            datetime(2026, 6, 1, 9, 30, tzinfo=hk),
+            datetime(2026, 7, 22, 9, 30, tzinfo=hk),
+            datetime(2026, 7, 22, 15, 59, tzinfo=hk),
+        ],
+    )
+    gateway = FakeGateway(
+        _batch("01347.HK"),
+        _complete_history(["01347.HK"], history_rows),
+    )
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    assert len(client.calls) == 5
+    assert store.get_state("01347.HK", "30m").freshness_state == "LIVE"
+    assert service.status()["errors"] == {}
+
+
+@pytest.mark.asyncio
+async def test_incomplete_latest_t_minus_one_pauses_cold_symbol_without_engine(
+    tmp_path,
+) -> None:
+    coverage = WebStockHistoryCoverage(
+        earliest_timestamp=NOW - timedelta(days=10),
+        latest_timestamp=NOW - timedelta(days=1),
+        latest_prior_session_date=date(2026, 7, 22),
+        latest_prior_session_complete=False,
+        state="INCOMPLETE",
+        reason="LATEST_PRIOR_SESSION_INCOMPLETE",
+    )
+    history = WebStockHistory(
+        minute_rows=_minute_rows("01347.HK"),
+        coverage_by_symbol={"01347.HK": coverage},
+    )
+    service, store, _, client = _service(
+        tmp_path,
+        batch=_batch("01347.HK"),
+    )
+    service._data_gateway.history = history
+
+    await service.run_once()
+
+    assert client.calls == []
+    assert {store.get_state("01347.HK", timeframe).freshness_state for timeframe in TIMEFRAMES} == {
+        "ANALYSIS_PAUSED"
+    }
+    assert (
+        service.status()["errors"]["01347.HK"]
+        == "HISTORY_INCOMPLETE:LATEST_PRIOR_SESSION_INCOMPLETE"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cold_symbol_does_not_lower_hot_symbol_live_fetch_start(tmp_path) -> None:
+    hot_at = NOW - timedelta(minutes=30)
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    store.upsert_symbol("INTC.US", "us", True)
+    _seed_reliable_states(store, "01347.HK", "hk", hot_at)
+    gateway = FakeGateway(_batch("01347.HK", "INTC.US"))
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    starts = gateway.calls[0][0]
+    assert starts["01347.HK"] == hot_at
+    us_midnight = datetime(2026, 7, 22, tzinfo=ZoneInfo("America/New_York"))
+    assert starts["INTC.US"] == us_midnight.astimezone(UTC)
+    assert gateway.history_calls == [(["INTC.US"], NOW)]
+    assert store.get_state("01347.HK", "5m").freshness_state == "LIVE"
+    assert store.get_state("INTC.US", "5m").freshness_state == "LIVE"
+
+
+@pytest.mark.asyncio
+async def test_history_live_overlap_is_deduplicated_before_aggregation(tmp_path) -> None:
+    hk = ZoneInfo("Asia/Hong_Kong")
+    overlap = datetime(2026, 7, 23, 9, 30, tzinfo=hk)
+    overlap_rows = _minute_rows_from_values("01347.HK", [overlap])
+    batch = WebStockBatch(
+        quotes=[],
+        minute_rows=overlap_rows,
+        source_timestamp=overlap,
+        freshness_by_symbol={"01347.HK": SymbolFreshness(state="LIVE", reason=None)},
+        gap_details={"01347.HK": []},
+    )
+    gateway = FakeGateway(
+        batch,
+        _complete_history(["01347.HK"], overlap_rows),
+    )
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    bars = next(bars for _, timeframe, bars in client.received if timeframe == "5m")
+    assert bars[-1]["volume"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_successful_cold_warmup_is_not_loaded_again_next_cycle(tmp_path) -> None:
+    service, _, gateway, _ = _service(tmp_path)
+
+    await service.run_once()
+    await service.run_once()
+
+    assert gateway.history_calls == [(["01347.HK"], NOW)]
+    assert len(gateway.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_history_load_failure_pauses_cold_but_hot_symbol_continues(tmp_path) -> None:
+    hot_at = NOW - timedelta(minutes=30)
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    store.upsert_symbol("INTC.US", "us", True)
+    _seed_reliable_states(store, "01347.HK", "hk", hot_at)
+    gateway = FakeGateway(
+        _batch("01347.HK", "INTC.US"),
+        RuntimeError("history provider down"),
+    )
+    client = FakeClient()
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    assert client.calls == [("01347.HK", timeframe) for timeframe in TIMEFRAMES]
+    assert store.get_state("01347.HK", "30m").freshness_state == "LIVE"
+    assert store.get_state("INTC.US", "30m").freshness_state == "ANALYSIS_PAUSED"
+    assert service.status()["errors"]["INTC.US"] == "history provider down"
 
 
 @pytest.mark.asyncio

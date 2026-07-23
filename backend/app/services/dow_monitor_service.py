@@ -34,7 +34,6 @@ from app.services.dow_monitor_models import (
 logger = logging.getLogger(__name__)
 
 TIMEFRAMES = ("5m", "15m", "30m", "60m", "day")
-WEBSTOCK_HISTORY_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 NotificationIndex = dict[tuple[str, str], list[DowNotification]]
 
 
@@ -174,12 +173,15 @@ class DowMonitorService:
             self._last_completed_at = self._now()
             return
 
-        start = await asyncio.to_thread(self._fetch_start, enabled)
+        starts_by_symbol, cold_symbols = await asyncio.to_thread(
+            self._fetch_plan,
+            enabled,
+            now,
+        )
         try:
             batch = await asyncio.to_thread(
-                self._data_gateway.fetch,
-                [item.symbol for item in enabled],
-                start,
+                self._data_gateway.fetch_since,
+                starts_by_symbol,
                 now,
             )
         except Exception as exc:
@@ -191,10 +193,51 @@ class DowMonitorService:
             self._last_completed_at = self._now()
             return
 
+        cold_live_symbols = [
+            item.symbol
+            for item in enabled
+            if item.symbol in cold_symbols
+            and (freshness := batch.freshness_by_symbol.get(item.symbol)) is not None
+            and freshness.state == "LIVE"
+        ]
+        history_rows = pl.DataFrame()
+        warmup_errors: dict[str, str] = {}
+        if cold_live_symbols:
+            try:
+                history = await asyncio.to_thread(
+                    self._data_gateway.load_history,
+                    cold_live_symbols,
+                    now,
+                )
+            except Exception as exc:
+                message = str(exc)
+                warmup_errors.update(dict.fromkeys(cold_live_symbols, message))
+            else:
+                history_rows = history.minute_rows
+                for symbol in cold_live_symbols:
+                    coverage = history.coverage_by_symbol.get(symbol)
+                    if coverage is None:
+                        warmup_errors[symbol] = "HISTORY_INCOMPLETE:NO_PRIOR_SESSION"
+                    elif coverage.state != "COMPLETE":
+                        warmup_errors[symbol] = (
+                            f"HISTORY_INCOMPLETE:{coverage.reason or 'NO_PRIOR_SESSION'}"
+                        )
+
         notification_index = await asyncio.to_thread(self._load_notification_index)
         any_success = False
         cycle_errors: list[str] = []
         for item in enabled:
+            warmup_error = warmup_errors.get(item.symbol)
+            if warmup_error is not None:
+                await asyncio.to_thread(
+                    self._mark_all,
+                    item,
+                    "ANALYSIS_PAUSED",
+                    now,
+                )
+                self._errors[item.symbol] = warmup_error
+                cycle_errors.append(f"{item.symbol}: {warmup_error}")
+                continue
             try:
                 error, symbol_succeeded = await asyncio.to_thread(
                     self._evaluate_symbol,
@@ -202,6 +245,8 @@ class DowMonitorService:
                     batch,
                     now,
                     notification_index,
+                    item.symbol in cold_symbols,
+                    history_rows,
                 )
             except asyncio.CancelledError:
                 raise
@@ -230,6 +275,8 @@ class DowMonitorService:
         batch: WebStockBatch,
         now: datetime,
         notification_index: NotificationIndex,
+        cold_start: bool,
+        history_rows: pl.DataFrame,
     ) -> tuple[str | None, bool]:
         freshness = batch.freshness_by_symbol.get(item.symbol)
         if freshness is None or freshness.state != "LIVE":
@@ -244,15 +291,30 @@ class DowMonitorService:
             )
 
         daily_rows = self._daily_loader(item.symbol, now)
+        canonical_minutes = (
+            self._merge_warmup_minutes(
+                item,
+                history_rows,
+                batch.minute_rows,
+            )
+            if cold_start
+            else batch.minute_rows
+        )
         frames_by_cutoff: dict[str | None, dict[str, TimeframeBars]] = {}
         errors: list[str] = []
         successes = 0
         for timeframe in TIMEFRAMES:
             previous_state = self.store.get_state(item.symbol, timeframe)
-            cutoff = previous_state.source_timestamp if previous_state is not None else None
+            cutoff = (
+                None
+                if cold_start
+                else previous_state.source_timestamp
+                if previous_state is not None
+                else None
+            )
             cutoff_key = cutoff.isoformat() if cutoff is not None else None
             if cutoff_key not in frames_by_cutoff:
-                minute_rows = self._incremental_minutes(item, batch.minute_rows, cutoff)
+                minute_rows = self._incremental_minutes(item, canonical_minutes, cutoff)
                 frames_by_cutoff[cutoff_key] = build_timeframes(
                     item.symbol,
                     minute_rows,
@@ -263,7 +325,7 @@ class DowMonitorService:
             bars, completion = self._merge_evaluation_bars(
                 item,
                 timeframe,
-                previous_state,
+                None if cold_start else previous_state,
                 frame,
                 now,
             )
@@ -522,17 +584,64 @@ class DowMonitorService:
             index.setdefault((notification.symbol, notification.timeframe), []).append(notification)
         return index
 
-    def _fetch_start(self, enabled: list[MonitoredSymbol]) -> datetime:
-        starts: list[datetime] = []
+    def _fetch_plan(
+        self,
+        enabled: list[MonitoredSymbol],
+        now: datetime,
+    ) -> tuple[dict[str, datetime], set[str]]:
+        starts: dict[str, datetime] = {}
+        cold_symbols: set[str] = set()
         for item in enabled:
             timestamps: list[datetime] = []
             for timeframe in TIMEFRAMES:
                 state = self.store.get_state(item.symbol, timeframe)
                 if state is None or state.source_timestamp is None:
-                    return WEBSTOCK_HISTORY_EPOCH
+                    cold_symbols.add(item.symbol)
+                    policy = market_session_policy(item.symbol)
+                    zone = ZoneInfo(policy.timezone)
+                    local_now = now.astimezone(zone)
+                    local_midnight = local_now.replace(
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+                    starts[item.symbol] = local_midnight.astimezone(UTC)
+                    break
                 timestamps.append(state.source_timestamp)
-            starts.append(min(timestamps))
-        return min(starts, default=WEBSTOCK_HISTORY_EPOCH)
+            else:
+                starts[item.symbol] = min(timestamps)
+        return starts, cold_symbols
+
+    def _merge_warmup_minutes(
+        self,
+        item: MonitoredSymbol,
+        history_rows: pl.DataFrame,
+        live_rows: pl.DataFrame,
+    ) -> pl.DataFrame:
+        available = [frame for frame in (history_rows, live_rows) if not frame.is_empty()]
+        if not available:
+            return pl.DataFrame()
+        combined = pl.concat(available, how="diagonal_relaxed")
+        zone = ZoneInfo(market_session_policy(item.symbol).timezone)
+        deduplicated: dict[tuple[str, datetime], dict] = {}
+        for row in combined.to_dicts():
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if symbol != item.symbol:
+                continue
+            value = row.get("datetime")
+            if value is None:
+                continue
+            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+            local = (
+                parsed.astimezone(zone).replace(tzinfo=None)
+                if parsed.tzinfo is not None
+                else parsed
+            )
+            deduplicated[(symbol, local)] = row
+        if not deduplicated:
+            return combined.head(0)
+        return pl.DataFrame(list(deduplicated.values()), schema=combined.schema)
 
     def _incremental_minutes(
         self,
