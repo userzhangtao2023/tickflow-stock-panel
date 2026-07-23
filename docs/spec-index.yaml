@@ -49,5 +49,15 @@ specifications:
     status: authoritative
     requirements:
       - REQ-STOCK-ANALYSIS-REPORT-COPY-001
+  - id: SPEC-DOW-WATCH-001
+    path: docs/superpowers/specs/2026-07-23-dow-realtime-watch-panel-design.md
+    status: authoritative
+    requirements: []
 conflicts: []
-exceptions: []
+exceptions:
+  - id: EXC-DOW-WATCH-IMPLEMENTATION-001
+    scope: SPEC-DOW-WATCH-001
+    owner: alwinzhang
+    reason: The approved watch-panel requirements are being implemented and executable evidence is created by this plan.
+    approval: docs/decisions/2026-07-23-dow-realtime-watch-panel.md
+    expires: 2026-08-06
