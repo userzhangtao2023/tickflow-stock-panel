@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 import pytest
@@ -192,8 +192,12 @@ def test_client_sends_exact_external_bar_contract_and_preserves_engine_fields() 
     assert result.signals[0].evidence[0].structure_id == "SUPPORT-MAIN-1"
     assert result.signals[0].side == "BUY"
     assert result.long_term.pattern_name == "长期下降趋势双突破"
-    assert result.long_term.first_anchor_time == "2026-07-17T15:00:00+08:00"
+    assert result.long_term.first_anchor_time == datetime.fromisoformat("2026-07-17T15:00:00+08:00")
     assert result.long_term.evidence_codes == ("LONG_LINE_BREAK", "KEY_LEVEL_BREAK")
+    assert isinstance(result.long_term.bar_time, (date, datetime))
+    assert result.model_dump(mode="json", by_alias=True)["longTerm"]["bar_time"] == (
+        "2026-07-23T10:30:00+08:00"
+    )
 
 
 def test_client_preserves_final_contract_without_reclassifying_bars() -> None:
@@ -250,6 +254,43 @@ def test_client_maps_timeout_to_engine_unavailable_without_inferred_signal() -> 
         raise httpx.ReadTimeout("engine timed out")
 
     client = LongbridgeDowClient("http://engine", transport=httpx.MockTransport(timeout))
+
+    with pytest.raises(DowEngineUnavailable):
+        client.evaluate(
+            "01347.HK",
+            "30m",
+            _bars(),
+            "FORMING",
+            datetime.fromisoformat("2026-07-23T10:47:15+08:00"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provisional", "false"),
+        ("bar_completion", "CLOSED"),
+        ("signal_stage", "FORMAL"),
+        ("trend_direction", "SIDEWAYS"),
+        ("breakout_type", "BREAK"),
+        ("operation", "立即买入"),
+        ("bar_time", "not-a-time"),
+        ("first_anchor_time", "not-a-time"),
+        ("second_anchor_time", "not-a-time"),
+        ("key_level_time", "not-a-time"),
+        ("first_break_time", "not-a-time"),
+        ("recent_low_time", "not-a-time"),
+        ("recent_low_confirmed_time", "not-a-time"),
+    ],
+)
+def test_client_rejects_malformed_authoritative_long_term_fields(
+    field: str,
+    value: object,
+) -> None:
+    response = _engine_response()
+    response["longTerm"] = {**response["longTerm"], field: value}
+    transport, _ = _capture_transport(httpx.Response(200, json=response))
+    client = LongbridgeDowClient("http://engine", transport=transport)
 
     with pytest.raises(DowEngineUnavailable):
         client.evaluate(

@@ -71,8 +71,10 @@ def notification_side(action_code: str) -> Literal["BUY", "SELL", "RISK"] | None
 def long_term_signal_family(snapshot: DowLongTermSnapshot) -> str | None:
     if (
         snapshot.bar_completion != "FINAL"
+        or snapshot.provisional
         or snapshot.signal_stage not in {"TRIGGER", "CONFIRMED"}
         or snapshot.line_id is None
+        or not snapshot.line_id.strip()
     ):
         return None
     if snapshot.operation == "买入触发":
@@ -87,7 +89,7 @@ def _transition_values(
     family: str | None,
     structure_id: str | None,
 ) -> EventTransition:
-    active = family is not None and structure_id is not None
+    active = family is not None and isinstance(structure_id, str) and bool(structure_id.strip())
     if not active:
         return EventTransition(
             next=ActivationState(
@@ -409,7 +411,11 @@ class DowMonitorService:
         long_transition = _transition_values(
             long_previous,
             long_family,
-            result.long_term.line_id if long_family is not None else None,
+            (
+                result.long_term.line_id.strip()
+                if long_family is not None and result.long_term.line_id is not None
+                else None
+            ),
         )
         engine_payload = result.model_dump(mode="json", by_alias=True)
         chart = {
@@ -564,7 +570,11 @@ class DowMonitorService:
             long_term=True,
         )
         current_family = long_term_signal_family(current)
-        current_structure = current.line_id if current_family is not None else None
+        current_structure = (
+            current.line_id.strip()
+            if current_family is not None and current.line_id is not None
+            else None
+        )
         if state is None:
             recorded = self._recorded_activation_values(
                 symbol,
@@ -582,9 +592,10 @@ class DowMonitorService:
             operation = raw.get("operation")
             if (
                 raw.get("bar_completion") == "FINAL"
+                and raw.get("provisional") is False
                 and raw.get("signal_stage") in {"TRIGGER", "CONFIRMED"}
                 and isinstance(raw.get("line_id"), str)
-                and raw.get("line_id")
+                and bool(raw["line_id"].strip())
             ):
                 stored_family = (
                     "LONG_TERM_BUY"
@@ -593,7 +604,7 @@ class DowMonitorService:
                     if operation == "卖出触发"
                     else None
                 )
-                stored_structure = raw.get("line_id") if stored_family is not None else None
+                stored_structure = raw["line_id"].strip() if stored_family is not None else None
         previous = ActivationState(
             active=stored_family is not None and stored_structure is not None,
             family=stored_family,

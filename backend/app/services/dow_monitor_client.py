@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from json import JSONDecodeError
-from typing import Any
+from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 
 class DowEngineUnavailable(RuntimeError):  # noqa: N818 - public engine contract name
@@ -96,32 +96,32 @@ class DowSnapshot(_EngineModel):
 class DowLongTermSnapshot(_EngineModel):
     symbol: str
     timeframe: str
-    bar_time: str
-    bar_completion: str
-    provisional: bool
-    trend_direction: str
+    bar_time: datetime | date
+    bar_completion: Literal["FINAL", "FORMING"]
+    provisional: StrictBool
+    trend_direction: Literal["UP", "DOWN", "RANGE", "UNKNOWN"]
     trend_name: str
     pattern_name: str
-    operation: str
-    signal_stage: str
-    breakout_type: str
+    operation: Literal["观察", "买入触发", "卖出触发", "持有", "无操作"]
+    signal_stage: Literal["NONE", "WARNING", "TRIGGER", "CONFIRMED"]
+    breakout_type: Literal["NONE", "TREND_LINE", "KEY_LEVEL", "DOUBLE_BREAKOUT", "RETEST"]
     line_id: str | None
     line_side: str | None
     line_status: str | None
-    first_anchor_time: str | None
+    first_anchor_time: datetime | date | None
     first_anchor_price: float | None
-    second_anchor_time: str | None
+    second_anchor_time: datetime | date | None
     second_anchor_price: float | None
     line_value: float | None
     key_level_type: str | None
-    key_level_time: str | None
+    key_level_time: datetime | date | None
     key_level_price: float | None
-    first_break_time: str | None
+    first_break_time: datetime | date | None
     recent_low_scale: str | None
     recent_low_label: str | None
-    recent_low_time: str | None
+    recent_low_time: datetime | date | None
     recent_low_price: float | None
-    recent_low_confirmed_time: str | None
+    recent_low_confirmed_time: datetime | date | None
     evidence_codes: tuple[str, ...]
     failure_reason: str | None
 

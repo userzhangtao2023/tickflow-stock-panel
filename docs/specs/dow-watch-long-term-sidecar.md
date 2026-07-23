@@ -15,18 +15,21 @@ reinterpret it.
 ## Active requirements
 
 - **REQ-DOW-WATCH-LONG-CLIENT-001:** TickFlow MUST strictly validate the
-  complete `longTerm` sidecar and preserve it in public persisted timeframe
-  state and chart payload without changing the existing local snapshot,
-  lines, signals, or actions.
+  complete `longTerm` sidecar, including strict booleans, authoritative
+  completion/stage/trend/breakout/operation enums, and real date/time fields;
+  it MUST preserve the sidecar in public persisted timeframe state and chart
+  payload without changing the existing local snapshot, lines, signals, or
+  actions. User-facing names and evidence codes remain lower-layer free text.
 - **REQ-DOW-WATCH-LONG-EVENT-001:** TickFlow MUST emit an independent
   long-term event only for lower-layer `买入触发` or `卖出触发` with
-  `bar_completion == FINAL`, a present line ID, and `signal_stage` equal to
-  `TRIGGER` or `CONFIRMED`; long-term families MUST remain distinct from local
-  families while retaining the five-part event key.
+  `bar_completion == FINAL`, `provisional == false`, a non-empty
+  whitespace-trimmed line ID, and `signal_stage` equal to `TRIGGER` or
+  `CONFIRMED`; long-term families MUST remain distinct from local families
+  while retaining the five-part event key.
 - **REQ-DOW-WATCH-LONG-RECOVERY-001:** Local and long-term activations MUST
-  deduplicate, deactivate/reactivate, sequence, and recover first-state crash
-  windows independently through public state and immutable notification
-  history.
+  deduplicate, deactivate/reactivate, sequence, and recover both first-state
+  and existing-state notification-written/state-write-crash windows
+  independently through public state and immutable notification history.
 
 ## Acceptance order
 
@@ -35,5 +38,6 @@ reinterpret it.
 3. Prove simultaneous local and long-term activations produce independent
    sequence-one event keys.
 4. Prove forming/provisional candidates are display-only.
-5. Prove sustained dedupe, reactivation sequence increment, and notification-
-   written/state-not-written crash recovery for the long-term family.
+5. Prove sustained dedupe, reactivation sequence increment, and both
+   first-state and existing-state notification-written/state-not-written crash
+   recovery for the long-term family.

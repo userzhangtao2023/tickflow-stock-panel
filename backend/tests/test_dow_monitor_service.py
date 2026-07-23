@@ -173,6 +173,7 @@ def _engine_result(
     long_signal_stage: str = "NONE",
     long_line_id: str | None = None,
     long_completion: str | None = None,
+    long_provisional: bool | None = None,
 ) -> DowEngineResult:
     current = bars[-1]
     active = action_code != "WATCH" and line_id is not None
@@ -249,7 +250,11 @@ def _engine_result(
                 "timeframe": timeframe,
                 "bar_time": current["timestamp"],
                 "bar_completion": long_completion or completion,
-                "provisional": (long_completion or completion) == "FORMING",
+                "provisional": (
+                    long_provisional
+                    if long_provisional is not None
+                    else (long_completion or completion) == "FORMING"
+                ),
                 "trend_direction": "DOWN",
                 "trend_name": "长期下降趋势",
                 "pattern_name": "长期下降趋势双突破",
@@ -298,6 +303,7 @@ class FakeClient:
         long_signal_stage: str = "NONE",
         long_line_id: str | None = None,
         long_completion: str | None = None,
+        long_provisional: bool | None = None,
     ) -> None:
         self.action_code = action_code
         self.line_id = line_id
@@ -308,6 +314,7 @@ class FakeClient:
         self.long_signal_stage = long_signal_stage
         self.long_line_id = long_line_id
         self.long_completion = long_completion
+        self.long_provisional = long_provisional
         self.calls: list[tuple[str, str]] = []
         self.received: list[tuple[str, str, list[dict]]] = []
         self.completions: list[tuple[str, str, str]] = []
@@ -344,6 +351,7 @@ class FakeClient:
             long_signal_stage=self.long_signal_stage,
             long_line_id=self.long_line_id,
             long_completion=self.long_completion,
+            long_provisional=self.long_provisional,
         )
         return self.last_result
 
@@ -664,6 +672,38 @@ async def test_forming_long_term_trigger_is_display_only(tmp_path) -> None:
     assert state.chart["longTerm"]["bar_completion"] == "FORMING"
 
 
+@pytest.mark.parametrize(
+    ("provisional", "line_id"),
+    [
+        (True, "LONG-RESISTANCE-7"),
+        (False, None),
+        (False, ""),
+        (False, "   "),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_formal_long_term_identity_is_display_only(
+    tmp_path,
+    provisional: bool,
+    line_id: str | None,
+) -> None:
+    client = FakeClient(
+        long_operation="买入触发",
+        long_signal_stage="TRIGGER",
+        long_line_id=line_id,
+        long_completion="FINAL",
+        long_provisional=provisional,
+    )
+    service, store, _, _ = _service(tmp_path, client=client)
+
+    await service.run_once()
+
+    assert store.list_notifications() == []
+    sidecar = store.get_state("01347.HK", "30m").chart["longTerm"]
+    assert sidecar["provisional"] is provisional
+    assert sidecar["line_id"] == line_id
+
+
 @pytest.mark.asyncio
 async def test_long_term_event_dedupes_then_reactivation_uses_its_own_sequence(
     tmp_path,
@@ -749,6 +789,66 @@ async def test_long_term_first_state_crash_recovers_from_notification_history(
     restarted = DowMonitorService(
         restored,
         FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW + timedelta(minutes=1),
+    )
+    await restarted.run_once()
+
+    keys = [item.event_key for item in restored.list_notifications() if item.timeframe == "30m"]
+    assert keys == ["01347.HK|30m|LONG_TERM_BUY|LONG-RESISTANCE-7|1"]
+
+
+@pytest.mark.asyncio
+async def test_long_term_existing_state_crash_recovers_from_notification_history(
+    tmp_path,
+) -> None:
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    class CrashAfterLongNotificationStore(DowMonitorStore):
+        crash_enabled = False
+        crashed = False
+
+        def save_state(self, state):
+            long_written = any(
+                "|LONG_TERM_BUY|" in item.event_key for item in self.list_notifications(limit=100)
+            )
+            if (
+                self.crash_enabled
+                and state.timeframe == "30m"
+                and long_written
+                and not self.crashed
+            ):
+                self.crashed = True
+                raise SimulatedProcessCrash
+            return super().save_state(state)
+
+    client = FakeClient()
+    store = CrashAfterLongNotificationStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    service = DowMonitorService(
+        store,
+        FakeGateway(_batch("01347.HK")),
+        client,
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+    await service.run_once()
+    assert store.get_state("01347.HK", "30m") is not None
+
+    client.long_operation = "买入触发"
+    client.long_signal_stage = "TRIGGER"
+    client.long_line_id = "  LONG-RESISTANCE-7  "
+    client.long_completion = "FINAL"
+    store.crash_enabled = True
+    with pytest.raises(SimulatedProcessCrash):
+        await service.run_once()
+
+    restored = DowMonitorStore(tmp_path)
+    restarted = DowMonitorService(
+        restored,
+        FakeGateway(_batch("01347.HK", source_timestamp=NOW + timedelta(minutes=1))),
         client,
         _daily_rows,
         now_fn=lambda: NOW + timedelta(minutes=1),
