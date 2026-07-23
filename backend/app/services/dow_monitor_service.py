@@ -274,7 +274,12 @@ class DowMonitorService:
         now: datetime,
     ) -> None:
         previous_state = self.store.get_state(item.symbol, timeframe)
-        previous = self._activation_from_state(item.symbol, timeframe, previous_state)
+        previous = self._activation_from_state(
+            item.symbol,
+            timeframe,
+            previous_state,
+            result.snapshot,
+        )
         transition = transition_event(previous, result.snapshot)
         engine_payload = result.model_dump(mode="json", by_alias=True)
         chart = {
@@ -361,6 +366,7 @@ class DowMonitorService:
         symbol: str,
         timeframe: str,
         state: DowTimeframeState | None,
+        current: DowSnapshot,
     ) -> ActivationState | None:
         sequence = self._maximum_sequence(symbol, timeframe)
         if state is None:
@@ -368,12 +374,68 @@ class DowMonitorService:
         family = signal_family(str(state.snapshot.get("action_code") or ""))
         structure_id = state.snapshot.get("line_id")
         active = family is not None and isinstance(structure_id, str) and bool(structure_id)
-        return ActivationState(
+        previous = ActivationState(
             active=active,
             family=family if active else None,
             structure_id=structure_id if active else None,
             activation_sequence=sequence,
         )
+        if active:
+            return previous
+        recorded = self._recorded_activation_after_state(
+            symbol,
+            timeframe,
+            state,
+            current,
+        )
+        return recorded or previous
+
+    def _recorded_activation_after_state(
+        self,
+        symbol: str,
+        timeframe: str,
+        state: DowTimeframeState,
+        current: DowSnapshot,
+    ) -> ActivationState | None:
+        family = signal_family(current.action_code)
+        structure_id = current.line_id
+        if family is None or structure_id is None:
+            return None
+        for notification in self.store.list_notifications(limit=1_000_000):
+            if notification.symbol != symbol or notification.timeframe != timeframe:
+                continue
+            activation = notification.snapshot_payload.get("activation")
+            notification_family = activation.get("family") if isinstance(activation, dict) else None
+            notification_structure = (
+                activation.get("structure_id") if isinstance(activation, dict) else None
+            )
+            if notification_family is None or notification_structure is None:
+                engine = notification.snapshot_payload.get("engine")
+                snapshot = engine.get("snapshot") if isinstance(engine, dict) else None
+                if isinstance(snapshot, dict):
+                    notification_family = signal_family(str(snapshot.get("action_code") or ""))
+                    notification_structure = snapshot.get("line_id")
+            if (
+                notification_family != family
+                or notification_structure != structure_id
+                or notification.triggered_at < state.updated_at
+            ):
+                continue
+            try:
+                notification_sequence = (
+                    int(activation["activation_sequence"])
+                    if isinstance(activation, dict)
+                    else int(notification.event_key.rsplit("|", 1)[1])
+                )
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            return ActivationState(
+                active=True,
+                family=family,
+                structure_id=structure_id,
+                activation_sequence=notification_sequence,
+            )
+        return None
 
     def _maximum_sequence(self, symbol: str, timeframe: str) -> int:
         maximum = 0

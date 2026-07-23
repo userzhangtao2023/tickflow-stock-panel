@@ -422,7 +422,17 @@ async def test_activation_notifies_once_then_reactivation_uses_next_sequence_and
     tmp_path,
 ) -> None:
     client = FakeClient(action_code="OPEN_LONG", line_id="LINE-1")
-    service, store, gateway, _ = _service(tmp_path, client=client)
+    current_now = NOW
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    gateway = FakeGateway(_batch("01347.HK"))
+    service = DowMonitorService(
+        store,
+        gateway,
+        client,
+        _daily_rows,
+        now_fn=lambda: current_now,
+    )
 
     await service.run_once()
     first = next(item for item in store.list_notifications() if item.timeframe == "30m")
@@ -438,11 +448,13 @@ async def test_activation_notifies_once_then_reactivation_uses_next_sequence_and
     assert persisted.snapshot_payload == frozen
 
     client.action_code = "OPEN_LONG"
+    current_now += timedelta(minutes=1)
     await service.run_once()
     assert len([item for item in store.list_notifications() if item.timeframe == "30m"]) == 1
 
     client.action_code = "WATCH"
     client.line_id = None
+    current_now += timedelta(minutes=1)
     await service.run_once()
     assert len([item for item in store.list_notifications() if item.timeframe == "30m"]) == 1
 
@@ -456,6 +468,7 @@ async def test_activation_notifies_once_then_reactivation_uses_next_sequence_and
     )
     client.action_code = "OPEN_LONG"
     client.line_id = "LINE-1"
+    current_now += timedelta(minutes=1)
     await service.run_once()
     keys = {item.event_key for item in store.list_notifications() if item.timeframe == "30m"}
     assert keys == {
@@ -569,6 +582,72 @@ async def test_restart_recovers_from_last_reliable_timestamp_without_duplicate_e
     notices = [item for item in store.list_notifications() if item.timeframe == "30m"]
     assert [item.event_key for item in notices] == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
     assert store.get_state("01347.HK", "30m").freshness_state == "LIVE"
+
+
+@pytest.mark.asyncio
+async def test_restart_after_notification_write_does_not_emit_next_sequence(tmp_path) -> None:
+    inactive_at = NOW - timedelta(minutes=2)
+    notification_at = NOW - timedelta(minutes=1)
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    for timeframe in TIMEFRAMES:
+        store.save_state(
+            DowTimeframeState(
+                symbol="01347.HK",
+                market="hk",
+                timeframe=timeframe,
+                freshness_state="LIVE",
+                source_timestamp=inactive_at,
+                snapshot={
+                    "action_code": "WATCH",
+                    "line_id": None,
+                    "bar_completion": "FORMING",
+                },
+                chart={"bars": [], "lines": [], "signals": []},
+                updated_at=inactive_at,
+            )
+        )
+    store.append_notification(
+        DowNotification(
+            notification_id="written-before-crash",
+            event_key="01347.HK|30m|OPEN_LONG|LINE-1|1",
+            symbol="01347.HK",
+            market="hk",
+            timeframe="30m",
+            side="BUY",
+            action_name="买入\uff08开多\uff09",
+            shape_name="首次突破趋势线",
+            triggered_at=notification_at,
+            trigger_price=102.0,
+            snapshot_payload={
+                "engine": {
+                    "snapshot": {
+                        "action_code": "OPEN_LONG",
+                        "line_id": "LINE-1",
+                    }
+                },
+                "activation": {
+                    "active": True,
+                    "family": "OPEN_LONG",
+                    "structure_id": "LINE-1",
+                    "activation_sequence": 1,
+                },
+            },
+        )
+    )
+    restored = DowMonitorStore(tmp_path)
+    service = DowMonitorService(
+        restored,
+        FakeGateway(_batch("01347.HK")),
+        FakeClient(action_code="OPEN_LONG", line_id="LINE-1"),
+        _daily_rows,
+        now_fn=lambda: NOW,
+    )
+
+    await service.run_once()
+
+    keys = [item.event_key for item in restored.list_notifications() if item.timeframe == "30m"]
+    assert keys == ["01347.HK|30m|OPEN_LONG|LINE-1|1"]
 
 
 @pytest.mark.asyncio
