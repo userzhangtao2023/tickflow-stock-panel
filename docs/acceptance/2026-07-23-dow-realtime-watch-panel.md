@@ -7,8 +7,9 @@
 
 - TickFlow 提交：`21f1493`、`072afde`；Longbridge 提交：`1430d0e`。
 - 生产镜像：
-  `tickflow-stock-panel-app:dow-monitor-badges-sessions-850a313-20260723-2350`；
-  上一可用镜像 `dow-monitor-history-alias-20260723-2323` 保留用于回滚。
+  `tickflow-stock-panel-app:dow-monitor-short-side-0fdd9e7-20260723-2358`；
+  上一可用镜像 `dow-monitor-badges-sessions-850a313-20260723-2350`
+  保留用于回滚。
 - `/health` 返回 `status=ok`；`/api/dow-monitor/status` 返回
   `running=true`、`last_error=null`、`errors={}`。
 - WebStock strict 数据为 `LIVE`，缺口列表为空；01347 的严格分钟序列为
@@ -32,8 +33,8 @@
 ## 生产页面人工验收
 
 在已登录的生产页面 `http://192.168.10.28:3018/dow-monitor?market=hk`
-直接检查最终镜像
-`tickflow-stock-panel-app:dow-monitor-badges-sessions-850a313-20260723-2350`：
+直接检查生产页面；最终镜像为
+`tickflow-stock-panel-app:dow-monitor-short-side-0fdd9e7-20260723-2358`：
 
 - 页面复用现有 TickFlow 侧栏、主题和认证框架，侧栏入口为“趋势监控”；
 - 页面同时显示“全部 / A股 / 港股 / 美股”市场筛选，以及“全部 / 有信号 /
@@ -45,6 +46,10 @@
   红色或绿色；
 - 点击卡片可以打开“01347.HK 完整K线”弹窗，弹窗显示实时状态、五周期切换、
   成交量、MACD、RSI、KDJ、BOLL、量能对比、OHLC 和均线信息。
+
+当前生产数据没有开空或平空事件，因而不伪造生产短仓信号。可执行回归测试另外构造
+与历史 BUY 信号冲突的当前 `OPEN_SHORT`、`CLOSE_SHORT` 快照，确认两者均按后端
+风险/卖出语义显示红色，而不是回退到历史 BUY 的绿色。
 
 该检查是生产 UI 的实际 DOM/交互观察；它不替代下层 WebStock 完整性、Longbridge
 引擎语义和通知状态机验收。

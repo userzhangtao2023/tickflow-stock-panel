@@ -43,3 +43,30 @@ systemd 调度单元。独立复核确认 Chronicle 仅有一个
 `tickflow-dow-monitor-health` 事件，已启用并按 10 分钟周期运行；实际
 run `jmrxo5s5095` 以 `job_complete/code=0` 完成。crontab、系统级 timer 和
 用户级 timer 的重复项均为 0。
+
+## 最终独立复审
+
+最终复审先发现并阻止发布两个当前状态语义问题：
+
+1. 历史回放信号曾可能覆盖当前 `WATCH` 徽标颜色；
+2. 健康巡检曾只按工作日和时段判断开市，节假日可能误报 stale。
+
+修复后，卡片先使用当前 snapshot 的 `OPEN_LONG`、`CLOSE_LONG`、`OPEN_SHORT`、
+`CLOSE_SHORT` 和 `WATCH`，只有当前 action 缺失时才兼容历史 chart signal。
+市场开市状态同时要求当前时刻位于常规会话、持久化 source 与本地日期一致，且
+source 本身位于常规会话。对应测试覆盖当前 WATCH 与历史信号冲突、短仓动作与
+历史 BUY 冲突、以及工作日节假日没有当日常规 K 线的情况。
+
+最终只读复审结论：
+
+- Critical：0；
+- Important：0；
+- SPEC：PASS；
+- QUALITY：PASS；
+- READY：YES。
+
+复审提出的唯一 Minor 为健康脚本测试导入顺序，已在 `f7ad021` 机械修正；Ruff 和
+该脚本的 5 项测试随后通过。生产最终运行镜像为
+`tickflow-stock-panel-app:dow-monitor-short-side-0fdd9e7-20260723-2358`，
+01347.HK 五周期继续保持 `LIVE / WATCH`，Chronicle 探针输出
+`Dow monitor healthy`。
