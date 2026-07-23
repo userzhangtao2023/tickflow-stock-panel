@@ -421,14 +421,28 @@ class ClickHouseProvider:
 
     def _query_realtime_rows_strict(self, symbols: list[str]) -> list[dict]:
         sql = f"""
-            SELECT symbol, market, snapshot_minute, last_done, prev_close,
-                   open, high, low, change_value, change_percentage, volume, turnover
-            FROM {self._table("lb_realtime_quotes")}
-            WHERE symbol IN {_symbols_sql(symbols)}
-              AND snapshot_minute >= now('Asia/Shanghai') - INTERVAL 1 DAY
-              AND snapshot_minute <= now('Asia/Shanghai')
-            ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
-            LIMIT 1 BY symbol
+            WITH latest_quotes AS (
+                SELECT symbol, market, snapshot_minute, last_done, prev_close,
+                       open, high, low, change_value, change_percentage, volume, turnover
+                FROM {self._table("lb_realtime_quotes")}
+                WHERE symbol IN {_symbols_sql(symbols)}
+                  AND snapshot_minute >= now('Asia/Shanghai') - INTERVAL 1 DAY
+                  AND snapshot_minute <= now('Asia/Shanghai')
+                ORDER BY symbol, snapshot_minute DESC, inserted_at DESC
+                LIMIT 1 BY symbol
+            ),
+            symbol_metadata AS (
+                SELECT symbol, argMax(name, updated_at) AS name
+                FROM {self._table("lb_symbols")}
+                WHERE symbol IN {_symbols_sql(symbols)}
+                GROUP BY symbol
+            )
+            SELECT quote.symbol, quote.market, quote.snapshot_minute, quote.last_done,
+                   quote.prev_close, quote.open, quote.high, quote.low,
+                   quote.change_value, quote.change_percentage, quote.volume,
+                   quote.turnover, metadata.name
+            FROM latest_quotes AS quote
+            LEFT JOIN symbol_metadata AS metadata ON metadata.symbol = quote.symbol
         """
         return self._query(sql)
 
@@ -445,6 +459,7 @@ class ClickHouseProvider:
             change_pct = row.get("change_percentage")
             records.append({
                 "symbol": symbol,
+                "name": row.get("name"),
                 "market": row.get("market"),
                 "last_price": row.get("last_done"),
                 "prev_close": row.get("prev_close"),

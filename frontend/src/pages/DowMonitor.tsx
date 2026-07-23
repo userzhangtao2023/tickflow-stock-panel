@@ -13,7 +13,9 @@ import type {
 import {
   useAddDowMonitorSymbol,
   useDowMonitorOverview,
+  useDowMonitorStatus,
   useDowNotifications,
+  useMarkDowNotificationRead,
   useRemoveDowMonitorSymbol,
   useSetDowMonitorEnabled,
 } from '@/components/dow-monitor/useDowMonitor'
@@ -71,9 +73,11 @@ export function DowMonitor({
   const [symbolInput, setSymbolInput] = useState('')
   const overview = useDowMonitorOverview(market)
   const notificationQuery = useDowNotifications(market)
+  const status = useDowMonitorStatus()
   const addSymbol = useAddDowMonitorSymbol()
   const removeSymbol = useRemoveDowMonitorSymbol()
   const setEnabled = useSetDowMonitorEnabled()
+  const markRead = useMarkDowNotificationRead()
 
   const symbols = overview.data?.symbols ?? []
   const notifications = notificationQuery.data?.notifications ?? []
@@ -86,18 +90,51 @@ export function DowMonitor({
     [market, notifications, signal],
   )
 
+  const connectivityIssues: string[] = []
+  if (status.isLoading) connectivityIssues.push('正在连接监控服务')
+  else if (status.isError) connectivityIssues.push('监控服务连接失败')
+  else if (!status.data) connectivityIssues.push('监控服务状态不可用')
+  else if (!status.data.running) connectivityIssues.push('后台监控未运行')
+  if (overview.isLoading) connectivityIssues.push('监控状态加载中')
+  if (overview.isError) connectivityIssues.push('监控状态连接失败')
+  if (notificationQuery.isLoading) connectivityIssues.push('通知加载中')
+  if (notificationQuery.isError) connectivityIssues.push('通知连接失败')
+
+  const mutationIssues: string[] = []
+  if (addSymbol.isError) mutationIssues.push('添加失败，请重试')
+  if (removeSymbol.isError) mutationIssues.push('移除失败，请重试')
+  if (setEnabled.isError) mutationIssues.push('监控开关更新失败，请重试')
+  if (markRead.isError) mutationIssues.push('标记已读失败，请重试')
+  const visibleIssues = [...connectivityIssues, ...mutationIssues]
+  const forceBlocked = connectivityIssues.length > 0
+
   const submitSymbol = () => {
     const symbol = symbolInput.trim().toUpperCase()
     if (!symbol) return
-    addSymbol.mutate({ symbol, enabled: true })
-    setSymbolInput('')
+    addSymbol.mutate(
+      { symbol, enabled: true },
+      { onSuccess: () => setSymbolInput('') },
+    )
   }
+
+  const statusLabel = status.isLoading
+    ? '后台状态加载中'
+    : status.data?.running
+      ? '后台运行中'
+      : '后台未运行'
+  const sourceLabel = (
+    status.isLoading
+    || status.isError
+    || !overview.data?.source
+  )
+    ? '数据源不可用'
+    : `数据源 ${overview.data.source}`
 
   return (
     <div className="min-h-full bg-base">
       <PageHeader
         title="趋势监控"
-        subtitle={`${symbols.length} 只 · 后台持续运行`}
+        subtitle={`${symbols.length} 只 · ${statusLabel}`}
         right={(
           <form
             className="flex items-center gap-2"
@@ -115,16 +152,32 @@ export function DowMonitor({
             />
             <button
               type="submit"
+              aria-label={addSymbol.isPending ? '添加中' : '添加'}
               disabled={addSymbol.isPending}
-              className="h-8 rounded-btn bg-accent px-3 text-xs font-medium text-white transition-opacity disabled:opacity-50"
+              className="h-8 rounded-btn bg-accent px-3 text-xs font-medium text-white transition-opacity disabled:cursor-wait disabled:opacity-50"
             >
-              添加
+              {addSymbol.isPending ? '添加中' : '添加'}
             </button>
           </form>
         )}
       />
 
-      <DowMonitorSignalRail notifications={filteredNotifications} />
+      {visibleIssues.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap gap-x-4 gap-y-1 border-b border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger sm:px-5"
+        >
+          {visibleIssues.map(message => <span key={message}>{message}</span>)}
+        </div>
+      )}
+
+      <DowMonitorSignalRail
+        notifications={filteredNotifications}
+        loading={notificationQuery.isLoading}
+        error={notificationQuery.isError}
+        onRead={notificationId => markRead.mutate(notificationId)}
+        readPendingId={markRead.isPending ? markRead.variables : undefined}
+      />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-5">
         <MarketFilterTabs value={market} onChange={setMarket} />
@@ -146,13 +199,11 @@ export function DowMonitor({
             </button>
           ))}
         </div>
-        <span className="ml-auto text-[10px] text-muted">
-          数据源 {overview.data?.source ?? 'webstock'}
-        </span>
+        <span className="ml-auto text-[10px] text-muted">{sourceLabel}</span>
       </div>
 
       <main className="p-3 sm:px-5">
-        {overview.isLoading ? (
+        {overview.isLoading && symbols.length === 0 ? (
           <div className="py-10 text-center text-sm text-muted">加载监控状态…</div>
         ) : filteredSymbols.length === 0 ? (
           <div className="rounded-card border border-dashed border-border py-10 text-center text-sm text-muted">
@@ -167,6 +218,12 @@ export function DowMonitor({
               <DowMonitorCard
                 key={item.symbol}
                 item={item}
+                forceBlocked={forceBlocked}
+                blockedReason={connectivityIssues[0]}
+                togglePending={
+                  setEnabled.isPending && setEnabled.variables?.symbol === item.symbol
+                }
+                removePending={removeSymbol.isPending && removeSymbol.variables === item.symbol}
                 onOpen={onOpen}
                 onToggle={(symbol, enabled) => setEnabled.mutate({ symbol, enabled })}
                 onRemove={symbol => removeSymbol.mutate(symbol)}

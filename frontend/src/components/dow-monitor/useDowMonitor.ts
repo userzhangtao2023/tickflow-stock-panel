@@ -27,6 +27,15 @@ export function useDowNotifications(market: DowMonitorMarket) {
   })
 }
 
+export function useDowMonitorStatus() {
+  return useQuery({
+    queryKey: QK.dowMonitorStatus,
+    queryFn: () => api.dowMonitorStatus(),
+    refetchInterval: POLL_INTERVAL_MS,
+    placeholderData: keepPreviousData,
+  })
+}
+
 export function useDowMonitorDetail(symbol: string, timeframe: DowTimeframe) {
   return useQuery({
     queryKey: QK.dowMonitorDetail(symbol, timeframe),

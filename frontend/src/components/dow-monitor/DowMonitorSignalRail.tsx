@@ -10,8 +10,16 @@ function notificationClass(side: DowMonitorNotification['side']) {
 
 export function DowMonitorSignalRail({
   notifications,
+  loading = false,
+  error = false,
+  onRead,
+  readPendingId,
 }: {
   notifications: DowMonitorNotification[]
+  loading?: boolean
+  error?: boolean
+  onRead?: (notificationId: string) => void
+  readPendingId?: string
 }) {
   return (
     <section
@@ -20,7 +28,9 @@ export function DowMonitorSignalRail({
       className="sticky top-0 z-20 border-y border-border bg-base/95 px-3 py-2 backdrop-blur sm:px-5"
     >
       {notifications.length === 0 ? (
-        <div className="flex h-8 items-center justify-center text-xs text-muted">暂无最新信号</div>
+        <div className="flex h-8 items-center justify-center text-xs text-muted">
+          {loading ? '正在加载通知' : error ? '通知加载失败' : '暂无最新信号'}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
           {notifications.slice(0, 8).map(notification => (
@@ -38,6 +48,17 @@ export function DowMonitorSignalRail({
               </span>
               <span className="shrink-0 font-medium">{notification.action_name}</span>
               <span className="truncate text-secondary">{notification.shape_name}</span>
+              {notification.read_at == null && onRead && (
+                <button
+                  type="button"
+                  aria-label={`标记 ${notification.symbol} 已读`}
+                  disabled={readPendingId === notification.notification_id}
+                  onClick={() => onRead(notification.notification_id)}
+                  className="ml-auto shrink-0 rounded border border-current/30 px-1 py-0.5 text-[10px] disabled:cursor-wait disabled:opacity-50"
+                >
+                  已读
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -150,6 +150,7 @@ class DowMonitorService:
         self._last_success_by_symbol: dict[str, datetime] = {}
         self._last_error: str | None = None
         self._errors: dict[str, str] = {}
+        self._latest_quotes_by_symbol: dict[str, dict] = {}
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -211,6 +212,7 @@ class DowMonitorService:
                 await asyncio.to_thread(self._mark_all, item, "STALE_DATA", now)
             self._last_completed_at = self._now()
             return
+        self._retain_latest_quotes(batch.quotes)
 
         cold_live_symbols = [
             item.symbol
@@ -966,6 +968,7 @@ class DowMonitorService:
         for item in self.store.list_symbols():
             if market != "all" and item.market != market:
                 continue
+            quote = self._latest_quotes_by_symbol.get(item.symbol, {})
             states = {}
             for timeframe in TIMEFRAMES:
                 state = self.store.get_state(item.symbol, timeframe)
@@ -976,6 +979,10 @@ class DowMonitorService:
             symbols.append(
                 {
                     **item.model_dump(mode="json"),
+                    "name": quote.get("name"),
+                    "last_price": quote.get("last_price"),
+                    "change_pct": quote.get("change_pct"),
+                    "quote_timestamp": quote.get("timestamp"),
                     "states": states,
                     "latest_notification": latest_by_symbol.get(item.symbol),
                     "last_success_at": self._as_json_time(
@@ -989,6 +996,23 @@ class DowMonitorService:
             "source": "webstock",
             "source_timestamp": self._as_json_time(max(source_timestamps, default=None)),
         }
+
+    def _retain_latest_quotes(self, quotes: list[dict]) -> None:
+        for row in quotes:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            previous = self._latest_quotes_by_symbol.get(symbol)
+            timestamp = row.get("timestamp")
+            previous_timestamp = previous.get("timestamp") if previous else None
+            if previous is None or (
+                isinstance(timestamp, (int, float))
+                and (
+                    not isinstance(previous_timestamp, (int, float))
+                    or timestamp >= previous_timestamp
+                )
+            ):
+                self._latest_quotes_by_symbol[symbol] = deepcopy(row)
 
     def detail(self, symbol: str, timeframe: str) -> dict | None:
         state = self.store.get_state(symbol.strip().upper(), timeframe)

@@ -192,6 +192,10 @@ export interface DowMonitorNotification {
 }
 
 export interface DowMonitorOverviewSymbol extends DowMonitorSymbol {
+  name: string | null
+  last_price: number | null
+  change_pct: number | null
+  quote_timestamp: number | string | null
   states: Partial<Record<DowTimeframe, DowMonitorTimeframeState>>
   latest_notification: DowMonitorNotification | null
   last_success_at: string | null

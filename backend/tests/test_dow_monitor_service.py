@@ -1361,6 +1361,37 @@ async def test_queries_expose_source_freshness_success_error_and_running(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_overview_retains_latest_strict_quote_metadata_without_chart_derivation(
+    tmp_path,
+) -> None:
+    batch = _batch("01347.HK")
+    batch.quotes[0].update(
+        {
+            "name": "华丰科技",
+            "last_price": 13.47,
+            "change_pct": 0.0125,
+            "timestamp": int(NOW.timestamp() * 1_000),
+        }
+    )
+    service, _, gateway, _ = _service(tmp_path, batch=batch)
+
+    await service.run_once()
+    first = service.overview("hk")["symbols"][0]
+    gateway.batch = RuntimeError("webstock disconnected")
+    await service.run_once()
+    retained = service.overview("hk")["symbols"][0]
+
+    expected = {
+        "name": "华丰科技",
+        "last_price": 13.47,
+        "change_pct": 0.0125,
+        "quote_timestamp": int(NOW.timestamp() * 1_000),
+    }
+    assert {key: first[key] for key in expected} == expected
+    assert {key: retained[key] for key in expected} == expected
+
+
+@pytest.mark.asyncio
 async def test_cold_start_keeps_t_minus_one_across_a_share_long_holiday(tmp_path) -> None:
     shanghai = ZoneInfo("Asia/Shanghai")
     current_now = datetime(2026, 10, 9, 10, 0, tzinfo=shanghai)

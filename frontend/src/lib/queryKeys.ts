@@ -89,6 +89,7 @@ export const QK = {
                            ['dow-monitor', 'overview', market] as const,
   dowMonitorNotifications: (market: DowMonitorMarket) =>
                                ['dow-monitor', 'notifications', market] as const,
+  dowMonitorStatus: ['dow-monitor', 'status'] as const,
   dowMonitorDetail: (symbol: string, timeframe: DowTimeframe) =>
                        ['dow-monitor', 'detail', symbol, timeframe] as const,
 

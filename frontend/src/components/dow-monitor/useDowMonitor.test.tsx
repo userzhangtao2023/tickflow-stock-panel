@@ -8,6 +8,7 @@ import {
   useAddDowMonitorSymbol,
   useDowMonitorDetail,
   useDowMonitorOverview,
+  useDowMonitorStatus,
   useDowNotifications,
   useMarkDowNotificationRead,
   useRemoveDowMonitorSymbol,
@@ -74,10 +75,30 @@ describe('Dow monitor queries', () => {
     })
   })
 
+  it('polls backend monitor status every 15 seconds', async () => {
+    const { queryClient, wrapper } = createWrapper()
+
+    renderHook(() => useDowMonitorStatus(), { wrapper })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/dow-monitor/status', expect.anything())
+    })
+    const query = queryClient.getQueryCache().find({
+      queryKey: ['dow-monitor', 'status'],
+      exact: true,
+    })
+    const options = query?.options as { refetchInterval?: number } | undefined
+    expect(options?.refetchInterval).toBe(15_000)
+  })
+
   it('preserves persisted partial sidecars and activation state without normalising their casing', () => {
     const response = {
       symbols: [{
         symbol: '01347.HK',
+        name: '华丰科技',
+        last_price: 13.47,
+        change_pct: 0.0125,
+        quote_timestamp: 1_774_752_700_000,
         market: 'hk',
         enabled: true,
         created_at: '2026-07-23T08:00:00Z',

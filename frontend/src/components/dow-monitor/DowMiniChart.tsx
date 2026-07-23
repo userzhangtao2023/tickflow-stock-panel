@@ -1,10 +1,16 @@
 import * as echarts from 'echarts'
-import type { EChartsOption } from 'echarts'
+import type { ECharts, EChartsOption } from 'echarts'
 import { useEffect, useMemo, useRef } from 'react'
 
 import { useChartTheme } from '@/lib/theme'
 
-import type { DowMonitorChart } from './types'
+import type {
+  DowMonitorBar,
+  DowMonitorChart,
+  DowMonitorLine,
+  DowMonitorSignal,
+  DowSignalSide,
+} from './types'
 
 const CANDLE_UP = '#C74040'
 const CANDLE_DOWN = '#2D9B65'
@@ -14,44 +20,105 @@ const LONG_TERM_AMBER = '#F59E0B'
 const BUY_GREEN = '#22C55E'
 const SELL_RED = '#EF4444'
 
-function completeLongTermAnchors(chart: DowMonitorChart) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && Number.isFinite(Date.parse(value))
+}
+
+function validBars(chart: unknown): DowMonitorBar[] {
+  if (!isRecord(chart) || !Array.isArray(chart.bars)) return []
+  return chart.bars.filter((bar): bar is DowMonitorBar => (
+    isRecord(bar)
+    && isFiniteNumber(bar.index)
+    && isTimestamp(bar.timestamp)
+    && isFiniteNumber(bar.open)
+    && isFiniteNumber(bar.high)
+    && isFiniteNumber(bar.low)
+    && isFiniteNumber(bar.close)
+    && isFiniteNumber(bar.volume)
+  ))
+}
+
+function validLines(chart: unknown): DowMonitorLine[] {
+  if (!isRecord(chart) || !Array.isArray(chart.lines)) return []
+  return chart.lines.filter((line): line is DowMonitorLine => (
+    isRecord(line)
+    && typeof line.id === 'string'
+    && line.id.length > 0
+    && (line.side === 'SUPPORT' || line.side === 'RESISTANCE')
+    && (line.role === 'MAIN' || line.role === 'ACCELERATION')
+    && Array.isArray(line.anchorTimes)
+    && line.anchorTimes.length >= 2
+    && isTimestamp(line.anchorTimes[0])
+    && isTimestamp(line.anchorTimes[1])
+    && Array.isArray(line.anchorPrices)
+    && line.anchorPrices.length >= 2
+    && isFiniteNumber(line.anchorPrices[0])
+    && isFiniteNumber(line.anchorPrices[1])
+  ))
+}
+
+function validSignals(chart: unknown, bars: DowMonitorBar[]): DowMonitorSignal[] {
+  if (!isRecord(chart) || !Array.isArray(chart.signals)) return []
+  const barTimes = new Set(bars.map(bar => bar.timestamp))
+  return chart.signals.filter((signal): signal is DowMonitorSignal => (
+    isRecord(signal)
+    && (signal.side === 'BUY' || signal.side === 'SELL' || signal.side === 'RISK')
+    && isTimestamp(signal.barTime)
+    && barTimes.has(signal.barTime)
+    && isFiniteNumber(signal.price)
+  ))
+}
+
+function completeLongTermAnchors(chart: unknown) {
+  if (!isRecord(chart) || !isRecord(chart.longTerm)) return null
   const longTerm = chart.longTerm
-  const firstTime = longTerm?.first_anchor_time
-  const firstPrice = longTerm?.first_anchor_price
-  const secondTime = longTerm?.second_anchor_time
-  const secondPrice = longTerm?.second_anchor_price
   if (
-    typeof firstTime !== 'string'
-    || firstTime.length === 0
-    || typeof secondTime !== 'string'
-    || secondTime.length === 0
-    || typeof firstPrice !== 'number'
-    || !Number.isFinite(firstPrice)
-    || typeof secondPrice !== 'number'
-    || !Number.isFinite(secondPrice)
+    !isTimestamp(longTerm.first_anchor_time)
+    || !isTimestamp(longTerm.second_anchor_time)
+    || !isFiniteNumber(longTerm.first_anchor_price)
+    || !isFiniteNumber(longTerm.second_anchor_price)
   ) {
     return null
   }
-  return [[firstTime, firstPrice], [secondTime, secondPrice]]
+  return [
+    [longTerm.first_anchor_time, longTerm.first_anchor_price],
+    [longTerm.second_anchor_time, longTerm.second_anchor_price],
+  ]
+}
+
+export function getLatestValidDowSignalSide(chart: unknown): DowSignalSide | null {
+  const bars = validBars(chart)
+  const side = validSignals(chart, bars).at(-1)?.side
+  return side === 'BUY' || side === 'SELL' || side === 'RISK' ? side : null
 }
 
 export function buildDowMiniChartOption(
-  chart: DowMonitorChart,
+  chart: DowMonitorChart | unknown,
   colors = {
     border: '#353539',
     grid: 'rgba(255,255,255,0.06)',
   },
 ): EChartsOption {
-  const bars = chart.bars ?? []
-  const backendLines = chart.lines ?? []
-  const backendSignals = chart.signals ?? []
-  const lineSeries = backendLines.map(line => {
-    const acceleration = line.role.toUpperCase() === 'ACCELERATION'
-    const resistance = line.side.toUpperCase() === 'RESISTANCE'
+  const bars = validBars(chart)
+  const backendLines = validLines(chart)
+  const backendSignals = validSignals(chart, bars)
+  const lineSeries: Array<Record<string, unknown>> = backendLines.map(line => {
+    const acceleration = line.role === 'ACCELERATION'
+    const resistance = line.side === 'RESISTANCE'
     return {
       id: line.id,
       name: `${line.side} ${line.role}`,
-      type: 'line' as const,
+      type: 'line',
       data: [
         [line.anchorTimes[0], line.anchorPrices[0]],
         [line.anchorTimes[1], line.anchorPrices[1]],
@@ -61,7 +128,7 @@ export function buildDowMiniChartOption(
       connectNulls: true,
       lineStyle: {
         color: resistance ? RESISTANCE_MAGENTA : SUPPORT_BLUE,
-        type: acceleration ? 'dashed' as const : 'solid' as const,
+        type: acceleration ? 'dashed' : 'solid',
         width: acceleration ? 1.5 : 2,
       },
       z: acceleration ? 4 : 5,
@@ -126,7 +193,7 @@ export function buildDowMiniChartOption(
             name: signal.side,
             coord: [signal.barTime, signal.price],
             itemStyle: {
-              color: signal.side.toUpperCase() === 'BUY' ? BUY_GREEN : SELL_RED,
+              color: signal.side === 'BUY' ? BUY_GREEN : SELL_RED,
             },
           })),
         },
@@ -147,6 +214,7 @@ export function DowMiniChart({
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const instanceRef = useRef<ECharts | null>(null)
   const chartTheme = useChartTheme()
   const option = useMemo(
     () => buildDowMiniChartOption(chart, chartTheme),
@@ -154,15 +222,23 @@ export function DowMiniChart({
   )
 
   useEffect(() => {
-    if (!containerRef.current) return
-    const instance = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
-    instance.setOption(option, true)
-    const resize = () => instance.resize()
-    window.addEventListener('resize', resize)
+    const container = containerRef.current
+    if (!container) return
+    const instance = echarts.init(container, undefined, { renderer: 'canvas' })
+    instanceRef.current = instance
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => instance.resize())
+    observer?.observe(container)
     return () => {
-      window.removeEventListener('resize', resize)
+      observer?.disconnect()
       instance.dispose()
+      instanceRef.current = null
     }
+  }, [])
+
+  useEffect(() => {
+    instanceRef.current?.setOption(option, true)
   }, [option])
 
   return (

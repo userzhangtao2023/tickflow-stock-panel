@@ -90,6 +90,30 @@ def test_market_filter_changes_response_only_not_enabled_state(tmp_path) -> None
     assert next(item for item in service.store.list_symbols() if item.symbol == "INTC.US").enabled
 
 
+def test_overview_api_exposes_authoritative_quote_header_fields(tmp_path) -> None:
+    service = _service(tmp_path)
+    service.store.upsert_symbol("01347.HK", "hk", True)
+    service._latest_quotes_by_symbol["01347.HK"] = {
+        "symbol": "01347.HK",
+        "name": "华丰科技",
+        "last_price": 13.47,
+        "change_pct": 0.0125,
+        "timestamp": int(NOW.timestamp() * 1_000),
+    }
+
+    response = _client(service).get("/api/dow-monitor/overview?market=hk")
+
+    assert response.status_code == 200
+    expected = {
+        "name": "华丰科技",
+        "last_price": 13.47,
+        "change_pct": 0.0125,
+        "quote_timestamp": int(NOW.timestamp() * 1_000),
+    }
+    item = response.json()["symbols"][0]
+    assert {key: item[key] for key in expected} == expected
+
+
 def test_detail_validates_timeframe_and_preserves_long_term_sidecar(tmp_path) -> None:
     service = _service(tmp_path)
     service.store.upsert_symbol("01347.HK", "hk", True)

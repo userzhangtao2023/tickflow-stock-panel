@@ -126,6 +126,36 @@ def test_realtime_normalizes_percentage_and_timestamp() -> None:
     assert "limit 1 by symbol" in query.queries[-1].lower()
 
 
+def test_realtime_strict_joins_existing_symbol_metadata_without_name_fallback() -> None:
+    query = QueryRecorder([
+        {
+            "symbol": "NBIS.US",
+            "name": "Nebius Group",
+            "market": "us",
+            "snapshot_minute": "2026-07-18 06:19:00.000",
+            "last_done": 177.71,
+            "prev_close": 171.77,
+            "open": 172.0,
+            "high": 178.0,
+            "low": 170.0,
+            "change_value": 5.94,
+            "change_percentage": 3.4581,
+            "volume": 1000,
+            "turnover": 177710,
+        }
+    ])
+    provider = ClickHouseProvider(query_fn=query)
+
+    named = provider.get_realtime_strict(["NBIS.US"])
+    query.rows = [{**query.rows[0], "symbol": "UNKNOWN.US", "name": None}]
+    unnamed = provider.get_realtime_strict(["UNKNOWN.US"])
+
+    assert named[0]["name"] == "Nebius Group"
+    assert unnamed[0]["name"] is None
+    assert "longbridge.lb_symbols" in query.queries[0]
+    assert "argMax(name, updated_at) AS name" in query.queries[0]
+
+
 def test_realtime_limits_latest_rows_to_current_shanghai_date() -> None:
     query = QueryRecorder([])
     provider = ClickHouseProvider(query_fn=query)

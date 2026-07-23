@@ -144,3 +144,110 @@ without prematurely changing `docs/traceability.yaml`.
 3. Frontend lint remains unavailable because `eslint` is not installed in the
    checked-out dependency graph. No dependency/configuration change was made
    outside Task 9.
+
+---
+
+## Review remediation addendum
+
+The post-implementation review identified six important and three minor gaps.
+This addendum supersedes the original concern that the card header had to derive
+price/change from chart bars. The grid now consumes authoritative strict
+realtime quote metadata supplied by the backend overview contract.
+
+### Remediated behavior
+
+- The ClickHouse strict realtime query joins the existing `lb_symbols` metadata
+  table and returns its latest stored name. It does not invent a fallback name.
+- The monitor service retains the latest successful strict quote per symbol and
+  exposes `name`, `last_price`, `change_pct`, and `quote_timestamp` from that
+  quote. A failed later poll retains those fields; chart bars are never used for
+  the card header.
+- The page polls `/api/dow-monitor/status` every 15 seconds. Loading, stopped,
+  status/query failures, and unavailable status are visible and force every
+  retained card and timeframe badge into a neutral blocked state. The page no
+  longer claims that the backend is running or substitutes a hard-coded source.
+- Add, remove, enable/disable, and mark-read failures remain visible and
+  retryable. Pending controls are scoped to the affected record, and the add
+  input clears only from the successful mutation callback.
+- The card article is no longer an interactive surrogate. A dedicated,
+  accessible detail button owns `onOpen(symbol, timeframe)`; keyboard activation
+  of switches, remove controls, and timeframe controls cannot open details.
+- Paused symbols render every timeframe and the summary as neutral/blocked,
+  even when a persisted backend action or signal was formerly actionable.
+- Runtime validation whitelists complete bars, `MAIN`/`ACCELERATION`
+  `SUPPORT`/`RESISTANCE` lines, `BUY`/`SELL`/`RISK` signals whose coordinates
+  reference a retained bar, and long-term lines with two complete valid
+  anchors. Malformed legacy payloads are omitted safely without invented
+  semantics.
+- Each mini chart creates one ECharts instance, updates it with `setOption`,
+  resizes through one `ResizeObserver`, and disconnects/disposes on unmount.
+- The responsive `1 / 2 / 3 / 4` column classes remain intact, and retained
+  loading/error layouts plus pending, malformed-legacy, and lifecycle states
+  have executable coverage.
+
+### Remediation RED/GREEN evidence
+
+Backend RED tests first failed on the missing metadata join and missing overview
+fields (`name`, `last_price`, `change_pct`, and `quote_timestamp`). Frontend RED
+tests then failed on the absent status hook, chart-derived header, inaccessible
+card activation, optimistic input clearing, missing mutation/query states,
+non-neutral paused cards, unsafe legacy payload handling, and repeated ECharts
+initialization.
+
+Final GREEN commands and observed results:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests/test_clickhouse_provider.py tests/test_dow_monitor_service.py tests/test_dow_monitor_api.py -q
+# 81 passed
+
+cd ..\frontend
+pnpm test --run src/components/dow-monitor/useDowMonitor.test.tsx src/pages/DowMonitor.test.tsx
+# 25 passed
+pnpm test --run
+# 80 passed across 23 files
+pnpm build
+# TypeScript and Vite build passed
+
+cd ..
+.\backend\.venv\Scripts\python.exe scripts\check_spec_compliance.py
+# Specification compliance passed
+```
+
+The production build retains the repository's existing large-chunk warning.
+The complete suite retains the existing React Router v7 future-flag warnings.
+
+### Independent remediation requirements-to-evidence review
+
+`SPEC-DOW-WATCH-001` remains authoritative under
+`EXC-DOW-WATCH-IMPLEMENTATION-001`; this Task 9 remediation therefore records
+task-level evidence without prematurely editing the final Task 12 traceability
+index.
+
+| Active requirement | Implementation evidence | Executable acceptance evidence | Review conclusion |
+| --- | --- | --- | --- |
+| `REQ-DOW-WATCH-UI-001` | `DowMonitor.tsx`, `DowMonitorCard.tsx`, `DowMonitorSignalRail.tsx` | authoritative header, responsive grid, status/error, mutation, pending and accessibility tests in `DowMonitor.test.tsx` | The grid uses strict quote headers, exposes truthful operational state, and has one dedicated detail control without adding a dialog or navigation. |
+| `REQ-DOW-WATCH-FILTER-001` | `DowMonitor.tsx` | shared market/signal filter and no-toggle-on-market-change tests | One local market value still gates cards and notifications, with no monitoring mutation from filter changes. |
+| `REQ-DOW-WATCH-DATA-001` | `provider.py`, `dow_monitor_service.py`, `types.ts` | strict metadata join, retained quote, API contract and no-chart-derivation tests | Header data originates in the strict realtime quote path; later query failure retains the latest successful quote and does not invoke a fallback source. |
+| `REQ-DOW-WATCH-MTF-001` | `DowMonitorCard.tsx` | five-timeframe selection, paused-all-neutral and query-blocked-all-neutral tests | Timeframe controls remain per-card display state; disabled or operationally blocked cards cannot present actionable colors. |
+| `REQ-DOW-WATCH-SIGNAL-001` | `DowMiniChart.tsx`, `DowMonitorCard.tsx` | exact line/signal colors, empty-array, adversarial payload and lifecycle tests | The UI accepts only whitelisted complete backend semantics. Unknown or malformed records disappear rather than being coerced into a known signal/line. |
+| `REQ-DOW-WATCH-NOTIFY-001` | `DowMonitorSignalRail.tsx`, `DowMonitor.tsx` | loading/error, read-failure/retry and scoped read-pending tests | Persisted notifications remain bounded and visible; read state is explicit and retryable. |
+| `REQ-DOW-WATCH-BACKGROUND-001` | `useDowMonitor.ts`, `DowMonitor.tsx` | 15-second status-query and stopped/loading/error retained-layout tests | The page reports backend status from the status endpoint and never hard-codes a running claim. |
+| `REQ-DOW-WATCH-STALE-001` | `DowMonitorCard.tsx`, `DowMonitor.tsx` | freshness, paused, stopped, query-loading and query-error blocking tests | Lower-layer freshness and operational availability are semantic gates; retained data never substitutes for a live/tradable claim. |
+
+Lower-layer DOW line, signal, and long-term acceptance remains the semantic
+authority. These higher-layer tests establish faithful consumption and safe
+rejection only; no passing UI snapshot or color assertion is treated as proof
+of lower-layer semantics.
+
+### Additional remediation files
+
+- `backend/app/plugins/clickhouse/provider.py`
+- `backend/app/services/dow_monitor_service.py`
+- `backend/tests/test_clickhouse_provider.py`
+- `backend/tests/test_dow_monitor_service.py`
+- `backend/tests/test_dow_monitor_api.py`
+- `frontend/src/components/dow-monitor/types.ts`
+- `frontend/src/components/dow-monitor/useDowMonitor.ts`
+- `frontend/src/components/dow-monitor/useDowMonitor.test.tsx`
+- `frontend/src/lib/queryKeys.ts`
