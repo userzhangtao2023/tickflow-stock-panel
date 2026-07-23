@@ -16,10 +16,12 @@ reinterpret it.
 
 - **REQ-DOW-WATCH-LONG-CLIENT-001:** TickFlow MUST strictly validate the
   complete `longTerm` sidecar, including strict booleans, authoritative
-  completion/stage/trend/breakout/operation enums, and real date/time fields;
-  it MUST preserve the sidecar in public persisted timeframe state and chart
-  payload without changing the existing local snapshot, lines, signals, or
-  actions. User-facing names and evidence codes remain lower-layer free text.
+  completion/stage/trend/breakout/operation enums, `PRIMARY`-only recent-low
+  scale, and strict ISO date/datetime strings that reject numeric coercion; it
+  MUST preserve the sidecar and its string timestamp representation in public
+  persisted timeframe state and chart payload without changing the existing
+  local snapshot, lines, signals, actions, or activation semantics.
+  User-facing names and evidence codes remain lower-layer free text.
 - **REQ-DOW-WATCH-LONG-EVENT-001:** TickFlow MUST emit an independent
   long-term event only for lower-layer `买入触发` or `卖出触发` with
   `bar_completion == FINAL`, `provisional == false`, a non-empty

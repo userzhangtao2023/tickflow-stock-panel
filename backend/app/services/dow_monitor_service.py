@@ -89,7 +89,7 @@ def _transition_values(
     family: str | None,
     structure_id: str | None,
 ) -> EventTransition:
-    active = family is not None and isinstance(structure_id, str) and bool(structure_id.strip())
+    active = family is not None and structure_id is not None
     if not active:
         return EventTransition(
             next=ActivationState(

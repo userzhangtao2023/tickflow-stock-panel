@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import datetime
 
 import httpx
 import pytest
@@ -192,9 +192,9 @@ def test_client_sends_exact_external_bar_contract_and_preserves_engine_fields() 
     assert result.signals[0].evidence[0].structure_id == "SUPPORT-MAIN-1"
     assert result.signals[0].side == "BUY"
     assert result.long_term.pattern_name == "长期下降趋势双突破"
-    assert result.long_term.first_anchor_time == datetime.fromisoformat("2026-07-17T15:00:00+08:00")
+    assert result.long_term.bar_time == "2026-07-23T10:30:00+08:00"
+    assert result.long_term.first_anchor_time == "2026-07-17T15:00:00+08:00"
     assert result.long_term.evidence_codes == ("LONG_LINE_BREAK", "KEY_LEVEL_BREAK")
-    assert isinstance(result.long_term.bar_time, (date, datetime))
     assert result.model_dump(mode="json", by_alias=True)["longTerm"]["bar_time"] == (
         "2026-07-23T10:30:00+08:00"
     )
@@ -281,6 +281,9 @@ def test_client_maps_timeout_to_engine_unavailable_without_inferred_signal() -> 
         ("first_break_time", "not-a-time"),
         ("recent_low_time", "not-a-time"),
         ("recent_low_confirmed_time", "not-a-time"),
+        ("bar_time", 0),
+        ("first_anchor_time", 0),
+        ("recent_low_scale", "SECONDARY"),
     ],
 )
 def test_client_rejects_malformed_authoritative_long_term_fields(

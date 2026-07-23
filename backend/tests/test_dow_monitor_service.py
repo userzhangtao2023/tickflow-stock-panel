@@ -18,7 +18,7 @@ from app.services.dow_monitor_data import (
     WebStockHistoryCoverage,
 )
 from app.services.dow_monitor_models import DowNotification, DowTimeframeState
-from app.services.dow_monitor_service import DowMonitorService
+from app.services.dow_monitor_service import DowMonitorService, transition_event
 from app.services.dow_monitor_store import DowMonitorStore
 
 NOW = datetime(2026, 7, 23, 2, 1, tzinfo=UTC)
@@ -399,6 +399,38 @@ def _seed_reliable_states(
                 updated_at=source_timestamp,
             )
         )
+
+
+@pytest.mark.parametrize("line_id", ["", "   "])
+def test_local_transition_preserves_non_none_structure_identity_baseline(
+    line_id: str,
+) -> None:
+    snapshot = _engine_result(
+        "01347.HK",
+        "30m",
+        [
+            {
+                "timestamp": NOW.isoformat(),
+                "open": 100.0,
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 100.0,
+            }
+        ],
+        "FINAL",
+        action_code="OPEN_LONG",
+        line_id=line_id,
+        evaluated_at=NOW,
+    ).snapshot
+
+    transition = transition_event(None, snapshot)
+
+    assert transition.notify is True
+    assert transition.next.active is True
+    assert transition.next.family == "OPEN_LONG"
+    assert transition.next.structure_id == line_id
+    assert transition.next.activation_sequence == 1
 
 
 @pytest.mark.asyncio

@@ -6,10 +6,11 @@ are serialized, local results are unchanged, and FORMING remains provisional.
 
 - **REQ-DOW-WATCH-LONG-CLIENT-001:** Accepted. The typed client rejects extra
   sidecar fields, string-coerced booleans, invalid authoritative enums, and
-  invalid date/time values; exposes every field using real typed date/time
-  values; serializes them back to ISO JSON; and maps schema failures to
-  `DowEngineUnavailable`. The service persists the complete object under
-  `chart.longTerm` while retaining local `snapshot`, `lines`, and `signals`.
+  invalid or numeric date/time values; rejects non-`PRIMARY` recent-low scale;
+  preserves independently validated ISO date/datetime values as strings for
+  consumers and JSON; and maps schema failures to `DowEngineUnavailable`. The
+  service persists the complete object under `chart.longTerm` while retaining
+  local `snapshot`, `lines`, and `signals`.
 - **REQ-DOW-WATCH-LONG-EVENT-001:** Accepted. Controlled simultaneous local
   and long-term FINAL triggers produce `OPEN_LONG` and `LONG_TERM_BUY`
   sequence-one keys. Controlled FORMING, FINAL-but-provisional, null-line,
@@ -25,3 +26,9 @@ are serialized, local results are unchanged, and FORMING remains provisional.
 
 This acceptance uses executable structured assertions, not a snapshot,
 golden, screenshot, or downstream UI result.
+
+The direct local transition regression also proves the Task 6b long-term
+identity hardening does not alter the pre-existing local rule: local
+`OPEN_LONG` with an empty or whitespace-only, but non-`None`, line ID remains
+active and notifying. Long-term empty and whitespace-only IDs remain
+display-only through the separate long-term eligibility gate.

@@ -3,10 +3,35 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from json import JSONDecodeError
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    ValidationError,
+)
+
+
+def _validate_iso_date_or_datetime(value: str) -> str:
+    for parser in (datetime.fromisoformat, date.fromisoformat):
+        try:
+            parser(value)
+            return value
+        except ValueError:
+            continue
+    raise ValueError("must be an ISO date or datetime")
+
+
+IsoDateOrDateTime = Annotated[
+    str,
+    StringConstraints(strict=True),
+    AfterValidator(_validate_iso_date_or_datetime),
+]
 
 
 class DowEngineUnavailable(RuntimeError):  # noqa: N818 - public engine contract name
@@ -96,7 +121,7 @@ class DowSnapshot(_EngineModel):
 class DowLongTermSnapshot(_EngineModel):
     symbol: str
     timeframe: str
-    bar_time: datetime | date
+    bar_time: IsoDateOrDateTime
     bar_completion: Literal["FINAL", "FORMING"]
     provisional: StrictBool
     trend_direction: Literal["UP", "DOWN", "RANGE", "UNKNOWN"]
@@ -108,20 +133,20 @@ class DowLongTermSnapshot(_EngineModel):
     line_id: str | None
     line_side: str | None
     line_status: str | None
-    first_anchor_time: datetime | date | None
+    first_anchor_time: IsoDateOrDateTime | None
     first_anchor_price: float | None
-    second_anchor_time: datetime | date | None
+    second_anchor_time: IsoDateOrDateTime | None
     second_anchor_price: float | None
     line_value: float | None
     key_level_type: str | None
-    key_level_time: datetime | date | None
+    key_level_time: IsoDateOrDateTime | None
     key_level_price: float | None
-    first_break_time: datetime | date | None
-    recent_low_scale: str | None
+    first_break_time: IsoDateOrDateTime | None
+    recent_low_scale: Literal["PRIMARY"] | None
     recent_low_label: str | None
-    recent_low_time: datetime | date | None
+    recent_low_time: IsoDateOrDateTime | None
     recent_low_price: float | None
-    recent_low_confirmed_time: datetime | date | None
+    recent_low_confirmed_time: IsoDateOrDateTime | None
     evidence_codes: tuple[str, ...]
     failure_reason: str | None
 
