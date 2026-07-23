@@ -107,3 +107,24 @@ Commit message: `feat: add dow monitor frontend api`.
    authority record.
 2. Frontend lint is not executable in this checkout because `eslint` is absent;
    tests, typecheck/build, diff validation, and the specification checker pass.
+
+## Review remediation
+
+### Activation snapshot and legacy sidecar RED/GREEN
+
+Added a typed persisted-response fixture with the backend activation shape
+`{ active, family, structure_id, activation_sequence }`, a legacy
+`chart.longTerm` containing only `trendDirection` and `operation`, and a legacy
+notification engine containing only `snapshot`.
+
+Before the type changes, `pnpm build` failed because `active` and
+`trendDirection` were missing from the types and the partial engine snapshot was
+forced to satisfy the full live-engine schema. After adding the exact activation
+flag and compatibility-only partial sidecar types, the focused hook suite passed
+`5` tests and `pnpm build` passed. The complete frontend suite then passed
+`60` tests across `22` files.
+
+The strict `DowMonitorEnginePayload` and `DowMonitorLongTermSnapshot` still
+model the full live detail contract. Only persisted `chart.longTerm` and
+notification `snapshot_payload.engine` use `Partial` known fields plus opaque
+record compatibility, preserving their original casing and historical payloads.

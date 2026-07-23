@@ -121,11 +121,16 @@ export interface DowMonitorLongTermSnapshot {
   failure_reason: string | null
 }
 
+/** Persisted sidecars may predate the current strict engine schema. */
+export type DowMonitorPersistedLongTermSnapshot = Partial<DowMonitorLongTermSnapshot> & {
+  trendDirection?: string
+} & Record<string, unknown>
+
 export interface DowMonitorChart {
   bars?: DowMonitorBar[]
   lines?: DowMonitorLine[]
   signals?: DowMonitorSignal[]
-  longTerm?: DowMonitorLongTermSnapshot
+  longTerm?: DowMonitorPersistedLongTermSnapshot
 }
 
 export interface DowMonitorTimeframeState {
@@ -150,14 +155,22 @@ export interface DowMonitorEnginePayload {
   evaluatedAt: string
 }
 
+export type DowMonitorPersistedEnginePayload = Partial<
+  Omit<DowMonitorEnginePayload, 'snapshot' | 'longTerm'>
+> & {
+  snapshot?: Partial<DowMonitorSnapshot> & Record<string, unknown>
+  longTerm?: DowMonitorPersistedLongTermSnapshot
+} & Record<string, unknown>
+
 export interface DowMonitorActivationSnapshot {
+  active: boolean
   family: string
   structure_id: string
   activation_sequence: number
 }
 
 export interface DowMonitorNotificationSnapshot {
-  engine?: DowMonitorEnginePayload
+  engine?: DowMonitorPersistedEnginePayload
   current_ohlc?: Omit<DowMonitorBar, 'index'>
   source_timestamp?: string | null
   activation?: DowMonitorActivationSnapshot

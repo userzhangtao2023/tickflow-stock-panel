@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DowMonitorMarket } from './types'
+import type { DowMonitorMarket, DowMonitorOverviewResponse } from './types'
 import {
   useAddDowMonitorSymbol,
   useDowMonitorDetail,
@@ -72,6 +72,61 @@ describe('Dow monitor queries', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/dow-monitor/notifications?market=us', expect.anything())
       expect(fetchMock).toHaveBeenCalledWith('/api/dow-monitor/INTC.US?timeframe=15m', expect.anything())
     })
+  })
+
+  it('preserves persisted partial sidecars and activation state without normalising their casing', () => {
+    const response = {
+      symbols: [{
+        symbol: '01347.HK',
+        market: 'hk',
+        enabled: true,
+        created_at: '2026-07-23T08:00:00Z',
+        updated_at: '2026-07-23T08:00:00Z',
+        states: {
+          '5m': {
+            symbol: '01347.HK',
+            market: 'hk',
+            timeframe: '5m',
+            freshness_state: 'LIVE',
+            source_timestamp: '2026-07-23T08:00:00Z',
+            snapshot: {},
+            chart: { longTerm: { trendDirection: 'UP', operation: '持有' } },
+            updated_at: '2026-07-23T08:00:00Z',
+          },
+        },
+        latest_notification: {
+          notification_id: 'notification-1',
+          event_key: 'event-1',
+          symbol: '01347.HK',
+          market: 'hk',
+          timeframe: '5m',
+          side: 'BUY',
+          action_name: '买入',
+          shape_name: '突破',
+          triggered_at: '2026-07-23T08:00:00Z',
+          trigger_price: 12.3,
+          snapshot_payload: {
+            engine: { snapshot: { action: '观察' } },
+            activation: {
+              active: true,
+              family: 'LONG_TERM_BUY',
+              structure_id: 'LONG-1',
+              activation_sequence: 1,
+            },
+          },
+          read_at: null,
+        },
+        last_success_at: '2026-07-23T08:00:00Z',
+        last_error: null,
+      }],
+      source: 'webstock',
+      source_timestamp: '2026-07-23T08:00:00Z',
+    } satisfies DowMonitorOverviewResponse
+
+    const symbol = response.symbols[0]
+    expect(symbol.states['5m']?.chart.longTerm?.trendDirection).toBe('UP')
+    expect(symbol.latest_notification?.snapshot_payload.engine?.snapshot?.action).toBe('观察')
+    expect(symbol.latest_notification?.snapshot_payload.activation?.active).toBe(true)
   })
 
   it('polls each read model every 15 seconds and retains successful data during a refresh', async () => {
