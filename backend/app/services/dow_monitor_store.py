@@ -121,6 +121,21 @@ class DowMonitorStore:
             result.sort(key=lambda notification: notification.triggered_at, reverse=True)
             return result[:limit]
 
+    def get_notification(self, notification_id: str) -> DowNotification | None:
+        with self._lock:
+            self._refresh_notifications()
+            for notification in self._notifications:
+                if notification.notification_id == notification_id:
+                    return notification.model_copy(
+                        update={
+                            "read_at": self._read_at.get(
+                                notification.notification_id,
+                                notification.read_at,
+                            )
+                        }
+                    )
+            return None
+
     def mark_read(self, notification_id: str) -> bool:
         with self._lock:
             self._refresh_notifications()

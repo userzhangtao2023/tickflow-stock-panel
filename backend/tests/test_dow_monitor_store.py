@@ -142,3 +142,20 @@ def test_removing_symbol_keeps_its_historical_notifications(tmp_path):
     assert store.list_symbols() == []
     assert store.get_state("01347.HK", "30m") is None
     assert store.list_notifications() == [notification()]
+
+
+def test_store_retrieves_exact_notification_outside_list_limit(tmp_path):
+    store = DowMonitorStore(tmp_path)
+    first = notification()
+    assert store.append_notification(first) is True
+    for index in range(1, 1_001):
+        assert store.append_notification(
+            notification(event_key=f"event-{index}").model_copy(
+                update={
+                    "notification_id": f"notice-{index}",
+                    "triggered_at": NOW.replace(minute=index % 60),
+                }
+            )
+        )
+
+    assert store.get_notification(first.notification_id) == first

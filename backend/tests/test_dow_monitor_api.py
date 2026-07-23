@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -156,6 +156,40 @@ def test_notifications_read_and_status_expose_persisted_timestamps(tmp_path) -> 
     }
 
 
+def test_notification_read_returns_exact_oldest_notification_beyond_list_limit(tmp_path) -> None:
+    service = _service(tmp_path)
+    first = DowNotification(
+        notification_id="first-notification",
+        event_key="first-event",
+        symbol="01347.HK",
+        market="hk",
+        timeframe="5m",
+        side="BUY",
+        action_name="buy",
+        shape_name="shape",
+        triggered_at=NOW - timedelta(days=1),
+        trigger_price=12.3,
+        snapshot_payload={},
+    )
+    assert service.store.append_notification(first)
+    for index in range(1, 1_001):
+        assert service.store.append_notification(
+            first.model_copy(
+                update={
+                    "notification_id": f"notification-{index}",
+                    "event_key": f"event-{index}",
+                    "triggered_at": NOW + timedelta(seconds=index),
+                }
+            )
+        )
+
+    response = _client(service).patch("/api/dow-monitor/notifications/first-notification/read")
+
+    assert response.status_code == 200
+    assert response.json()["notification_id"] == "first-notification"
+    assert response.json()["read_at"] is not None
+
+
 def test_uninitialized_service_returns_503() -> None:
     app = FastAPI()
     app.include_router(dow_monitor.router)
@@ -235,3 +269,197 @@ def test_lifecycle_stops_monitor_before_closing_its_client() -> None:
     asyncio.run(main._stop_dow_monitor(app))
 
     assert events == ["stop", "close"]
+
+
+def test_real_lifespan_loads_provider_before_monitor_and_stops_before_shared_close(
+    monkeypatch, tmp_path
+) -> None:
+    from app import main
+    from app.data_providers import custom as custom_sources
+    from app.jobs import daily_pipeline
+    from app.services import (
+        auth,
+        ext_presets,
+        ext_pull,
+        financial_sync,
+        preferences,
+        wecom_bot_service,
+    )
+    from app.services import depth_service as depth_service_module
+    from app.services import screener as screener_module
+    from app.strategy import engine as strategy_engine_module
+    from app.strategy import monitor as strategy_monitor_module
+    from app.strategy import monitor_rules
+
+    events: list[str] = []
+    provider = object()
+
+    class FakeDataStore:
+        data_dir = tmp_path
+
+    class FakeRepository:
+        enriched_ready = False
+
+        def __init__(self, _store) -> None:
+            pass
+
+        def get_matrix_data_generation(self, _asset_type) -> None:
+            events.append("matrix")
+
+        def refresh_cache(self, *, background) -> None:
+            assert background is True
+
+    class FakeCapabilities:
+        def all(self) -> list[object]:
+            return []
+
+    class FakeQuoteService:
+        def set_repo(self, _repo) -> None:
+            pass
+
+        def boot_check(self) -> None:
+            pass
+
+        def set_app_state(self, _state) -> None:
+            pass
+
+        def stop(self) -> None:
+            events.append("shared-close")
+
+    class FakeStrategyMonitor:
+        pass
+
+    class FakeDepthService:
+        def set_repo(self, _repo) -> None:
+            pass
+
+        def set_app_state(self, _state) -> None:
+            pass
+
+        def boot_check(self) -> None:
+            pass
+
+        def start_polling(self) -> None:
+            pass
+
+        def stop_polling(self) -> None:
+            pass
+
+    class FakeScheduler:
+        def shutdown(self, *, wait) -> None:
+            assert wait is False
+
+    class FakePullScheduler:
+        def start(self, _data_dir) -> None:
+            pass
+
+        def refresh(self, _data_dir) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class FakeFinancialScheduler:
+        def start(self, _data_dir, _capset) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class FakeScreener:
+        _load_enriched_history = staticmethod(lambda *_args: None)
+
+        def __init__(self, _repo, asset_type="stock") -> None:
+            assert asset_type in {"stock", "etf"}
+
+    class FakeStrategyEngine:
+        def __init__(self, *, strategy_dirs) -> None:
+            assert strategy_dirs
+
+        def list_strategies(self) -> list[dict]:
+            return []
+
+    class FakeMonitorEngine:
+        rule_count = 0
+
+        def set_strategy_engine(self, _engine) -> None:
+            pass
+
+        def set_data_dir(self, _data_dir) -> None:
+            pass
+
+        def set_history_loader(self, _loader) -> None:
+            pass
+
+        def set_history_loader_etf(self, _loader) -> None:
+            pass
+
+        def set_rules(self, _rules) -> None:
+            pass
+
+    class FakeMonitorService:
+        async def stop(self) -> None:
+            events.append("monitor-stop")
+
+    class FakeMonitorClient:
+        def close(self) -> None:
+            events.append("monitor-client-close")
+
+    async def fake_start(app, _data_dir, resolved_provider, _endpoint) -> None:
+        assert resolved_provider is provider
+        assert events == ["providers-loaded", "clickhouse-resolved"]
+        app.state.dow_monitor_service = FakeMonitorService()
+        app.state.dow_monitor_client = FakeMonitorClient()
+        events.append("monitor-start")
+
+    async def fake_presets(_data_dir) -> None:
+        pass
+
+    monkeypatch.setattr(main, "DataStore", FakeDataStore)
+    monkeypatch.setattr(main, "KlineRepository", FakeRepository)
+    monkeypatch.setattr(main, "QuoteService", FakeQuoteService)
+    monkeypatch.setattr(main, "detect_capabilities", lambda: FakeCapabilities())
+    monkeypatch.setattr(main, "_start_dow_monitor", fake_start)
+    monkeypatch.setattr(main.settings, "backtest_matrix_disk_cache_enabled", False)
+    monkeypatch.setattr(main.settings, "backtest_matrix_cache_prewarm", False)
+    monkeypatch.setattr(auth, "bootstrap_from_env", lambda: None)
+    monkeypatch.setattr(custom_sources, "load_all", lambda: events.append("providers-loaded"))
+    monkeypatch.setattr(custom_sources, "list_sources", lambda: [])
+    monkeypatch.setattr(
+        custom_sources,
+        "get_provider",
+        lambda name: (
+            events.append("clickhouse-resolved") or provider if name == "clickhouse" else None
+        ),
+    )
+    monkeypatch.setattr(daily_pipeline, "set_app_state", lambda _state: None)
+    monkeypatch.setattr(daily_pipeline, "start_scheduler", lambda *_args: FakeScheduler())
+    monkeypatch.setattr(strategy_monitor_module, "StrategyMonitorService", FakeStrategyMonitor)
+    monkeypatch.setattr(strategy_monitor_module, "MonitorRuleEngine", FakeMonitorEngine)
+    monkeypatch.setattr(depth_service_module, "DepthService", FakeDepthService)
+    monkeypatch.setattr(ext_presets, "ensure_builtin_presets", fake_presets)
+    monkeypatch.setattr(ext_pull, "pull_scheduler", FakePullScheduler())
+    monkeypatch.setattr(financial_sync, "financial_scheduler", FakeFinancialScheduler())
+    monkeypatch.setattr(screener_module, "ScreenerService", FakeScreener)
+    monkeypatch.setattr(strategy_engine_module, "StrategyEngine", FakeStrategyEngine)
+    monkeypatch.setattr(preferences, "get_strategy_monitor_enabled", lambda: False)
+    monkeypatch.setattr(monitor_rules, "load_all", lambda _data_dir: [])
+    monkeypatch.setattr(
+        wecom_bot_service,
+        "WecomBotService",
+        lambda: SimpleNamespace(
+            set_app_state=lambda _state: None,
+            boot_check=lambda: None,
+            stop=lambda: None,
+        ),
+    )
+
+    async def exercise() -> None:
+        app = FastAPI()
+        async with main.lifespan(app):
+            assert events == ["providers-loaded", "clickhouse-resolved", "monitor-start"]
+
+    asyncio.run(exercise())
+
+    assert events.index("monitor-stop") < events.index("monitor-client-close")
+    assert events.index("monitor-client-close") < events.index("shared-close")

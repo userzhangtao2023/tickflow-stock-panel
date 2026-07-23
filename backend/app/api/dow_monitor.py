@@ -98,13 +98,13 @@ def notifications(
 @router.patch("/notifications/{notification_id}/read")
 def mark_notification_read(notification_id: str, request: Request) -> dict:
     service = _service(request)
+    if service.store.get_notification(notification_id) is None:
+        raise HTTPException(status_code=404, detail="Notification was not found")
     if not service.store.mark_read(notification_id):
         raise HTTPException(status_code=404, detail="Notification was not found")
-    notification = next(
-        item
-        for item in service.store.list_notifications(limit=1_000)
-        if item.notification_id == notification_id
-    )
+    notification = service.store.get_notification(notification_id)
+    if notification is None:
+        raise HTTPException(status_code=404, detail="Notification was not found")
     return notification.model_dump(mode="json")
 
 
