@@ -75,13 +75,19 @@ const rows: OHLC[] = [
   },
 ]
 
-function Harness({ markers = [] }: { markers?: Parameters<typeof EChartsCandlestick>[0]['markers'] }) {
+function Harness({
+  data = rows,
+  markers = [],
+}: {
+  data?: OHLC[]
+  markers?: Parameters<typeof EChartsCandlestick>[0]['markers']
+}) {
   const indicators = useKChartIndicatorControls()
   return (
     <>
       <KChartIndicatorControls state={indicators} />
       <EChartsCandlestick
-        data={rows}
+        data={data}
         markers={markers}
         activeIndicators={indicators.activeIndicators}
         volumeCompare={indicators.volumeCompare}
@@ -119,19 +125,46 @@ describe('ECharts candlestick shared controls', () => {
     }
   })
 
-  it('uses the backend signal price as the marker y coordinate', () => {
+  it('uses the exact BUY signal price and supplied green color initially', () => {
     render(
       <Harness markers={[{
         date: rows[1].date,
-        kind: 'sell',
-        above: true,
+        kind: 'buy',
         price: 10.95,
-        label: '卖',
+        color: '#22C55E',
+        label: '买',
       }]} />,
     )
 
     const series = latestOption().series as Array<Record<string, any>>
     const candle = series.find(item => item.name === 'K')
     expect(candle?.markPoint.data[0].coord).toEqual([rows[1].date, 10.95])
+    expect(candle?.markPoint.data[0].itemStyle.color).toBe('#22C55E')
+  })
+
+  it('keeps the exact BUY signal price and supplied green color after compact zoom', () => {
+    const compactRows = Array.from({ length: 61 }, (_, index): OHLC => ({
+      ...rows[index % rows.length],
+      date: new Date(Date.UTC(2026, 6, 23, 1, 30 + index * 5)).toISOString(),
+    }))
+    const marker = {
+      date: compactRows[30].date,
+      kind: 'buy' as const,
+      price: 14.25,
+      color: '#22C55E',
+      label: '买',
+    }
+    render(<Harness data={compactRows} markers={[marker]} />)
+    chartMocks.setOption.mockClear()
+
+    const zoomRegistration = chartMocks.on.mock.calls.find(([event]) => event === 'dataZoom')
+    expect(zoomRegistration).toBeDefined()
+    const onDataZoom = zoomRegistration?.[1] as (() => void)
+    onDataZoom()
+
+    const series = latestOption().series as Array<Record<string, any>>
+    const candle = series.find(item => item.name === 'K')
+    expect(candle?.markPoint.data[0].coord).toEqual([marker.date, marker.price])
+    expect(candle?.markPoint.data[0].itemStyle.color).toBe('#22C55E')
   })
 })
