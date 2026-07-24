@@ -39,6 +39,13 @@ const SIGNAL_FILTERS: Array<{ value: SignalFilter; label: string }> = [
   { value: 'sell', label: '仅卖点' },
 ]
 
+function initialMarketFromUrl(): DowMonitorMarket {
+  const market = new URLSearchParams(window.location.search).get('market')
+  return market === 'cn' || market === 'hk' || market === 'us' || market === 'all'
+    ? market
+    : 'all'
+}
+
 function sameMarket(market: DowMonitorMarket, itemMarket: string) {
   return market === 'all' || market === itemMarket
 }
@@ -77,7 +84,7 @@ export function DowMonitor({
 }: {
   onOpen?: (symbol: string, timeframe: DowTimeframe) => void
 }) {
-  const [market, setMarket] = useState<DowMonitorMarket>('all')
+  const [market, setMarket] = useState<DowMonitorMarket>(initialMarketFromUrl)
   const [signal, setSignal] = useState<SignalFilter>('all')
   const [symbolInput, setSymbolInput] = useState('')
   const [suggestions, setSuggestions] = useState<InstrumentSuggestion[]>([])

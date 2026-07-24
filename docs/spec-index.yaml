@@ -16,5 +16,6 @@ specifications:
     status: authoritative
     requirements:
       - REQ-DOW-WATCH-OVERVIEW-LOAD-001
+      - REQ-DOW-WATCH-OVERVIEW-LOAD-002
 conflicts: []
 exceptions: []

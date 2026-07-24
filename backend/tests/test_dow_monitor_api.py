@@ -171,7 +171,38 @@ def test_overview_loads_persisted_state_collection_once(tmp_path) -> None:
     assert {item["symbol"] for item in result["symbols"]} == {"01347.HK", "INTC.US"}
     assert all(len(item["states"]) == 5 for item in result["symbols"])
     assert all(item["last_success_at"] == NOW.isoformat() for item in result["symbols"])
-    assert store.state_file_reads == 1
+    assert store.state_file_reads <= 1
+
+
+def test_warm_state_snapshot_reads_reuse_the_in_memory_snapshot(tmp_path) -> None:
+    class CountingStore(DowMonitorStore):
+        state_file_reads = 0
+
+        def _load_models(self, path, model_type):
+            if path == self._states_path:
+                self.state_file_reads += 1
+            return super()._load_models(path, model_type)
+
+    store = CountingStore(tmp_path)
+    stored = DowTimeframeState(
+        symbol="01347.HK",
+        market="hk",
+        timeframe="5m",
+        freshness_state="LIVE",
+        source_timestamp=NOW,
+        snapshot={"operation": "持有"},
+        chart={},
+        updated_at=NOW,
+    )
+    store.save_state(stored)
+    store.state_file_reads = 0
+
+    first = store.list_states()
+    second = store.list_states()
+
+    assert first == [stored]
+    assert second == [stored]
+    assert store.state_file_reads == 0
 
 
 def test_state_snapshot_read_does_not_wait_for_writer_lock(tmp_path) -> None:

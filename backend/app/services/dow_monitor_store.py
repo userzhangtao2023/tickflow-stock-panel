@@ -30,6 +30,7 @@ class DowMonitorStore:
         self._states_path = self._directory / "dow_monitor_states.json"
         self._notifications_path = self._directory / "dow_monitor_notifications.jsonl"
         self._activations_path = self._directory / "dow_monitor_activations.json"
+        self._states = tuple(self._load_models(self._states_path, DowTimeframeState))
         self._notifications, self._read_at = self._load_notifications()
         self._event_keys = {notification.event_key for notification in self._notifications}
 
@@ -73,13 +74,14 @@ class DowMonitorStore:
                 return False
             self._write_json(self._symbols_path, kept_symbols)
 
-            states = self._load_models(self._states_path, DowTimeframeState)
-            self._write_json(self._states_path, [item for item in states if item.symbol != symbol])
+            states = [item for item in self._states if item.symbol != symbol]
+            self._write_json(self._states_path, states)
+            self._states = tuple(states)
             return True
 
     def save_state(self, state: DowTimeframeState) -> DowTimeframeState:
         with self._lock:
-            states = self._load_models(self._states_path, DowTimeframeState)
+            states = list(self._states)
             for index, existing in enumerate(states):
                 if existing.symbol == state.symbol and existing.timeframe == state.timeframe:
                     states[index] = state
@@ -87,17 +89,17 @@ class DowMonitorStore:
             else:
                 states.append(state)
             self._write_json(self._states_path, states)
+            self._states = tuple(states)
             return state
 
     def list_states(self) -> list[DowTimeframeState]:
-        return self._load_models(self._states_path, DowTimeframeState)
+        return list(self._states)
 
     def get_state(self, symbol: str, timeframe: str) -> DowTimeframeState | None:
-        with self._lock:
-            for state in self._load_models(self._states_path, DowTimeframeState):
-                if state.symbol == symbol and state.timeframe == timeframe:
-                    return state
-            return None
+        for state in self._states:
+            if state.symbol == symbol and state.timeframe == timeframe:
+                return state
+        return None
 
     def append_notification(self, notification: DowNotification) -> bool:
         with self._lock:

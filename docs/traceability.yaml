@@ -51,3 +51,12 @@ requirements:
     acceptance:
       - {path: docs/acceptance/dow-watch-overview-load.md, type: semantic-acceptance}
       - {path: docs/reviews/dow-watch-overview-load.md, type: independent-review}
+  - id: REQ-DOW-WATCH-OVERVIEW-LOAD-002
+    specification: SPEC-DOW-WATCH-OVERVIEW-LOAD-001
+    implementation:
+      - frontend/src/pages/DowMonitor.tsx
+    tests:
+      - {path: tests/spec_contracts/test_dow_watch_overview_load_contract.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-watch-overview-load.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-watch-overview-load.md, type: independent-review}

@@ -30,6 +30,8 @@ const hooks = vi.hoisted(() => ({
   readState: {} as Record<string, unknown>,
   removeState: {} as Record<string, unknown>,
   toggleState: {} as Record<string, unknown>,
+  overviewMarket: vi.fn(),
+  notificationMarket: vi.fn(),
 }))
 
 const apiMocks = vi.hoisted(() => ({
@@ -69,9 +71,15 @@ const chartMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/dow-monitor/useDowMonitor', () => ({
-  useDowMonitorOverview: () => hooks.overview,
+  useDowMonitorOverview: (market: string) => {
+    hooks.overviewMarket(market)
+    return hooks.overview
+  },
   useDowMonitorStatus: () => hooks.status,
-  useDowNotifications: () => hooks.notifications,
+  useDowNotifications: (market: string) => {
+    hooks.notificationMarket(market)
+    return hooks.notifications
+  },
   useAddDowMonitorSymbol: () => ({ mutate: hooks.add, ...hooks.addState }),
   useMarkDowNotificationRead: () => ({
     mutate: hooks.markRead,
@@ -294,6 +302,7 @@ function deferred<T = unknown>() {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/dow-monitor')
   realtimeMocks.view = {
     status: 'fallback',
     states: new Map(),
@@ -306,6 +315,8 @@ beforeEach(() => {
   hooks.markRead.mockReset()
   hooks.remove.mockReset()
   hooks.setEnabled.mockReset()
+  hooks.overviewMarket.mockReset()
+  hooks.notificationMarket.mockReset()
   hooks.add.mockImplementation((_variables, options) => options?.onSuccess?.())
   hooks.markRead.mockResolvedValue(undefined)
   hooks.remove.mockResolvedValue(undefined)
@@ -364,6 +375,21 @@ afterEach(() => {
 })
 
 describe('Dow monitor page', () => {
+  it('uses the URL market for the initial requests and selected tab', () => {
+    window.history.replaceState({}, '', '/dow-monitor?market=hk')
+
+    render(<DowMonitor />)
+
+    expect(hooks.overviewMarket).toHaveBeenCalledWith('hk')
+    expect(hooks.notificationMarket).toHaveBeenCalledWith('hk')
+    expect(screen.getByRole('button', { name: '港股' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByTestId('card-01347.HK')).toBeInTheDocument()
+    expect(screen.queryByTestId('card-INTC.US')).not.toBeInTheDocument()
+  })
+
   it('shows a wide four-column grid and keeps notifications inside their market card', async () => {
     const user = userEvent.setup()
     render(<DowMonitor />)
