@@ -351,7 +351,7 @@ class StrategyEngine:
                 ),
             )
         )
-        valid_backends = {"polars_expr", "matrix_native", "python_history_legacy"}
+        valid_backends = {"polars_expr", "matrix_native", "python_history_legacy", "external"}
         if execution_backend not in valid_backends:
             raise ValueError(
                 f"unsupported execution backend {execution_backend!r}; "
@@ -359,7 +359,10 @@ class StrategyEngine:
             )
 
         matrix_strategy = getattr(mod, "MATRIX_STRATEGY", None)
-        if execution_backend == "matrix_native":
+        if execution_backend == "external":
+            if filter_fn is not None or filter_history_fn is not None or matrix_strategy is not None:
+                raise ValueError("external strategy must not declare local execution functions")
+        elif execution_backend == "matrix_native":
             from app.backtest.matrix import MatrixStrategy
 
             if matrix_strategy is None:
@@ -629,6 +632,10 @@ class StrategyEngine:
         t0 = time.perf_counter()
 
         s = self.get(strategy_id)
+        if s.execution_backend == "external":
+            raise ValueError(
+                f"strategy {strategy_id} uses a dedicated external runner"
+            )
         self.validate_context(s, context)
         as_of = context.as_of
         overrides = overrides or {}
@@ -735,7 +742,15 @@ class StrategyEngine:
         df = context.current
         params_map = params_map or {}
         overrides_map = overrides_map or {}
-        selected_ids = list(self._strategies) if strategy_ids is None else strategy_ids
+        selected_ids = (
+            [
+                sid
+                for sid, strategy in self._strategies.items()
+                if strategy.execution_backend != "external"
+            ]
+            if strategy_ids is None
+            else strategy_ids
+        )
         selected = [(sid, self.get(sid)) for sid in selected_ids]
         for _, strategy in selected:
             self.validate_context(strategy, context)

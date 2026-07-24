@@ -44,10 +44,14 @@ def test_all_builtin_strategies_declare_asset_types_and_timeframes():
         assert meta["timeframes"] == ["1d"]
 
 
-def test_all_builtin_strategies_use_matrix_backend_only():
+def test_locally_executed_builtin_strategies_use_matrix_backend_only():
     engine = _engine()
     assert engine.load_errors() == []
-    strategies = [engine.get(meta["id"]) for meta in engine.list_strategies()]
+    strategies = [
+        engine.get(meta["id"])
+        for meta in engine.list_strategies()
+        if meta["execution_backend"] != "external"
+    ]
     assert len(strategies) == 32
     assert all(strategy.execution_backend == "matrix_native" for strategy in strategies)
     assert all(strategy.matrix_strategy is not None for strategy in strategies)
@@ -79,13 +83,17 @@ def test_all_builtin_matrix_formulas_accept_base_market_matrix():
     from app.backtest.matrix import build_market_data_matrix
 
     fields = set()
-    for strategy in (engine.get(meta["id"]) for meta in engine.list_strategies()):
+    local_strategies = [
+        engine.get(meta["id"])
+        for meta in engine.list_strategies()
+        if meta["execution_backend"] != "external"
+    ]
+    for strategy in local_strategies:
         fields.update(engine._matrix_field_columns(strategy))
     market = build_market_data_matrix(panel, field_columns=fields)
-    for meta in engine.list_strategies():
-        strategy = engine.get(meta["id"])
+    for strategy in local_strategies:
         signals = strategy.matrix_strategy.compute_signals(market, {})
-        assert signals.shape == market.shape, meta["id"]
+        assert signals.shape == market.shape, strategy.meta["id"]
 
 
 def test_limit_up_strategies_are_stock_only():

@@ -464,7 +464,7 @@ export interface StrategyDetail {
   tags: string[]
   source: 'builtin' | 'custom' | 'ai'
   strategy_role: 'buy' | 'early_buy' | 'risk'
-  execution_backend: 'polars_expr' | 'matrix_native' | 'python_history_legacy'
+  execution_backend: 'polars_expr' | 'matrix_native' | 'python_history_legacy' | 'external'
   asset_types: string[]
   timeframes: string[]
   version: string

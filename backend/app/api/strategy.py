@@ -26,36 +26,6 @@ from app.strategy.prompt_builder import build_step1, build_step2
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
-DOW_TREND_STRATEGY = {
-    "id": "dow_trend",
-    "name": "道氏趋势 · 多周期",
-    "description": "15分钟、30分钟、日线任一已完成周期出现 OPEN_LONG 即入选",
-    "tags": ["道氏", "多周期", "实时"],
-    "source": "builtin",
-    "strategy_role": "buy",
-    "execution_backend": "python_history_legacy",
-    "asset_types": ["stock"],
-    "timeframes": ["1d"],
-    "version": "1.0.0",
-    "basic_filter": {},
-    "params": [],
-    "params_defaults": {},
-    "scoring": {},
-    "entry_signals": ["OPEN_LONG"],
-    "exit_signals": ["CLOSE_LONG"],
-    "minute_exit_trigger_supported_signals": [],
-    "stop_loss": None,
-    "take_profit": None,
-    "trailing_stop": None,
-    "trailing_take_profit_activate": None,
-    "trailing_take_profit_drawdown": None,
-    "max_hold_days": None,
-    "alerts": [],
-    "order_by": "strategyScore",
-    "descending": True,
-    "limit": 80,
-}
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
@@ -223,8 +193,6 @@ def list_strategies(
         s = engine.get(sid)
         overrides = all_overrides.get(sid)
         result.append(_strategy_detail(s, overrides))
-    if (not asset_type or asset_type == "stock") and (not timeframe or timeframe == "1d"):
-        result.append(dict(DOW_TREND_STRATEGY))
     return {"strategies": result, "load_errors": engine.load_errors()}
 
 

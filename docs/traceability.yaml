@@ -4,6 +4,8 @@ requirements:
     specification: SPEC-DOW-TREND-STRATEGY-UI-001
     implementation:
       - backend/app/api/strategy.py
+      - backend/app/strategy/engine.py
+      - backend/app/strategy/builtin/dow_trend.py
       - frontend/src/pages/Screener.tsx
       - frontend/src/components/screener/DowStrategyCard.tsx
       - frontend/src/components/screener/ScreenerTable.tsx
