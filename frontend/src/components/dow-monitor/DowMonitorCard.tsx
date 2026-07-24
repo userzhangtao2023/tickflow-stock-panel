@@ -128,33 +128,16 @@ export function DowMonitorCard({
         blocked ? 'border-border/70 opacity-75' : 'border-border',
       )}
     >
-      <div className="flex items-start gap-2 px-2.5 pb-1.5 pt-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-mono text-sm font-semibold tracking-wide">
-              {item.symbol}
-            </span>
-            {name && <span className="truncate text-xs text-secondary">{name}</span>}
-          </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-mono text-lg tabular-nums">
-              {price == null ? '—' : price.toFixed(2)}
-            </span>
-            {change != null && (
-              <span className={cn(
-                'font-mono text-[10px] tabular-nums',
-                change > 0 ? 'text-bull' : change < 0 ? 'text-bear' : 'text-muted',
-              )}>
-                {change > 0 ? '+' : ''}{change.toFixed(2)}%
-              </span>
-            )}
-          </div>
-          {(quoteTime || successTime) && (
-            <div className="mt-0.5 flex gap-2 font-mono text-[9px] text-muted">
-              {quoteTime && <span>行情 {quoteTime}</span>}
-              {successTime && <span>成功 {successTime}</span>}
-            </div>
-          )}
+      <div
+        data-testid={`card-summary-${item.symbol}`}
+        data-layout="compact-two-row"
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto] grid-rows-2 items-center gap-x-2 px-2.5 py-1.5"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 font-mono text-sm font-semibold tracking-wide">
+            {item.symbol}
+          </span>
+          {name && <span className="truncate text-xs text-secondary">{name}</span>}
         </div>
 
         <button
@@ -165,7 +148,7 @@ export function DowMonitorCard({
           disabled={togglePending}
           onClick={() => onToggle(item.symbol, !item.enabled)}
           className={cn(
-            'relative mt-0.5 h-[18px] w-8 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50',
+            'relative col-start-2 row-start-1 h-[18px] w-8 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50',
             item.enabled ? 'bg-accent/70' : 'bg-border',
           )}
         >
@@ -183,13 +166,33 @@ export function DowMonitorCard({
           aria-label={`移除 ${item.symbol}`}
           disabled={removePending}
           onClick={() => onRemove(item.symbol)}
-          className="rounded p-0.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger disabled:cursor-wait disabled:opacity-50"
+          className="col-start-3 row-start-1 rounded p-0.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger disabled:cursor-wait disabled:opacity-50"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
+
+        <div className="col-span-3 row-start-2 mt-0.5 flex min-w-0 items-baseline gap-2 overflow-hidden">
+          <span className="shrink-0 font-mono text-base tabular-nums">
+            {price == null ? '—' : price.toFixed(2)}
+          </span>
+          {change != null && (
+            <span className={cn(
+              'shrink-0 font-mono text-[10px] tabular-nums',
+              change > 0 ? 'text-bull' : change < 0 ? 'text-bear' : 'text-muted',
+            )}>
+              {change > 0 ? '+' : ''}{change.toFixed(2)}%
+            </span>
+          )}
+          {(quoteTime || successTime) && (
+            <span className="ml-auto flex min-w-0 gap-2 overflow-hidden font-mono text-[9px] text-muted">
+              {quoteTime && <span className="whitespace-nowrap">行情 {quoteTime}</span>}
+              {successTime && <span className="whitespace-nowrap">成功 {successTime}</span>}
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-1 px-2.5 pb-1.5">
+      <div className="grid grid-cols-5 gap-1 px-2.5 pb-1">
         {TIMEFRAMES.map(option => {
           const state = item.states[option.value]
           const currentVisualState = visualState(state, forceBlocked || !item.enabled)
@@ -202,7 +205,7 @@ export function DowMonitorCard({
               data-tradable={currentVisualState === 'blocked' ? 'false' : 'true'}
               onClick={() => setTimeframe(option.value)}
               className={cn(
-                'h-6 rounded border text-[10px] font-medium transition-colors',
+                'h-5 rounded border text-[9px] font-medium transition-colors',
                 stateClass(currentVisualState),
                 timeframe === option.value && 'ring-1 ring-accent/70',
               )}
@@ -222,6 +225,7 @@ export function DowMonitorCard({
         <DowMiniChart
           chart={selectedState?.chart ?? {}}
           testId={`mini-chart-${item.symbol}-${timeframe}`}
+          height={180}
         />
       </button>
 

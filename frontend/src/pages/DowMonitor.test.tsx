@@ -363,6 +363,21 @@ describe('Dow monitor page', () => {
     expect(within(unnamed).getAllByText('INTC.US')).toHaveLength(1)
   })
 
+  it('keeps a compact two-row summary and gives the mini K-line 180 pixels', () => {
+    render(<DowMonitor />)
+
+    const card = screen.getByTestId('card-01347.HK')
+    expect(within(card).getByTestId('card-summary-01347.HK')).toHaveAttribute(
+      'data-layout',
+      'compact-two-row',
+    )
+    expect(within(card).getByText('行情 2026-03-29 02:51Z')).toBeInTheDocument()
+    expect(within(card).getByText('成功 2026-07-23 01:05Z')).toBeInTheDocument()
+    expect(within(card).getByTestId('mini-chart-01347.HK-5m')).toHaveStyle({
+      height: '180px',
+    })
+  })
+
   it('filters both cards and notifications by active, buy, and sell signal states', async () => {
     const user = userEvent.setup()
     render(<DowMonitor />)
