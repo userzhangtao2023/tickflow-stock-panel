@@ -70,3 +70,29 @@ source 本身位于常规会话。对应测试覆盖当前 WATCH 与历史信号
 `tickflow-stock-panel-app:dow-monitor-short-side-0fdd9e7-20260723-2358`，
 01347.HK 五周期继续保持 `LIVE / WATCH`，Chronicle 探针输出
 `Dow monitor healthy`。
+
+## 2026-07-24 卡片空间分配独立复核
+
+复核范围只包含 `REQ-DOW-WATCH-UI-001` 的卡片展示分配。实现差异只涉及
+`DowMonitorCard.tsx` 和 `DowMonitor.test.tsx`；没有后端、数据源、
+`DowMiniChart` 图表选项或 Longbridge 道氏算法文件发生变化。
+
+需求到证据复核如下：
+
+| 要求 | 可执行或生产证据 | 结论 |
+| --- | --- | --- |
+| 摘要为两行紧凑信息区 | 测试断言 `data-layout=compact-two-row`；生产实测 `64px` | PASS |
+| 价格、时间和控制信息不得删除 | 原字段测试继续通过；生产 DOM 完整显示所有字段 | PASS |
+| 五周期继续全部可见 | 原五周期交互测试继续通过；生产实测五按钮均为 `20px` | PASS |
+| 迷你 K 线高度为 `180px` | 测试直接断言内联高度；生产 DOM 实测 `180px` | PASS |
+| 底部中文操作与形态保留 | 原通知测试通过；生产显示“买入（开多）/强势回归确认” | PASS |
+| 不改变道氏语义 | 代码差异不含图表选项、后端或引擎文件；98 项前端测试通过 | PASS |
+
+独立要求到证据复核没有发现以截图或黄金文件代替语义验收的情况：布局尺寸由可执行
+测试和生产 DOM 同时证明，趋势线与信号语义继续沿用既有下层验收。最终结论：
+
+- Critical：0；
+- Important：0；
+- SPEC：PASS；
+- QUALITY：PASS；
+- READY：YES。

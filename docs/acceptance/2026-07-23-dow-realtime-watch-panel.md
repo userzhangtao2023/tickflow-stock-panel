@@ -121,3 +121,24 @@ restart_after_first_notification_write_before_any_state_does_not_emit_sequence_t
   `jmrxo5s5095`，`action=job_complete`，`code=0`，耗时 1.242 秒。
 - `crontab`、系统级 systemd timer、用户级 systemd timer 中同名健康巡检均为
   0 条，Chronicle 是该巡检的唯一调度入口。
+
+## 2026-07-24 紧凑卡片空间回归
+
+按 `REQ-DOW-WATCH-UI-001` 的 2026-07-24 批准补充，在生产页面
+`http://192.168.10.28:3018/dow-monitor?market=hk` 对 `01347.HK` 做实际
+DOM 与可视检查。运行镜像为
+`tickflow-stock-panel-app:dow-monitor-card-chart-caa6380-20260724-0915`。
+
+- 卡片实测约 `502 × 302` 像素；
+- 股票摘要压缩为两行，实测高度 `64` 像素；
+- 迷你 K 线实测高度 `180` 像素，约占卡片总高度的 60%，成为主要视觉区域；
+- 5、15、30、60 分钟和日 K 五个按钮全部可见，实测高度均为 `20` 像素；
+- 股票代码、名称、价格、涨跌幅、行情时间、成功时间、监控开关和移除按钮均保留；
+- 底部继续显示中文操作“买入（开多）”和中文形态“强势回归确认”；
+- K 线、主趋势线、加速线和买卖点由原 `DowMiniChart` 选项绘制，未修改道氏
+  数据、信号或新鲜度逻辑。
+
+可执行证据为 `DowMonitor.test.tsx` 新增的两行摘要与 `180px` 图表高度断言；
+完整前端回归为 `26 passed / 98 passed`，生产构建和规格检查均通过。容器切换后
+`/health` 返回 `status=ok`，监控状态继续为 `running=true`、`source=webstock`、
+`last_error=null`。
