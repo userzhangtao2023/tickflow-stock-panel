@@ -6,6 +6,10 @@ The Dow-monitor overview API MUST load the persisted timeframe-state collection
 at most once per request. It MUST NOT deserialize the complete state collection
 again for each monitored symbol or timeframe.
 
+Because state publication uses temporary files followed by atomic replacement,
+the overview bulk read MUST consume a complete old-or-new snapshot without
+waiting for the writer lock.
+
 The bulk-read path MUST preserve the existing market filter, five-timeframe
 state payloads, source timestamp, latest notification, runtime last-success
 timestamp precedence, and persisted last-success fallback semantics.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -171,6 +172,46 @@ def test_overview_loads_persisted_state_collection_once(tmp_path) -> None:
     assert all(len(item["states"]) == 5 for item in result["symbols"])
     assert all(item["last_success_at"] == NOW.isoformat() for item in result["symbols"])
     assert store.state_file_reads == 1
+
+
+def test_state_snapshot_read_does_not_wait_for_writer_lock(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    store.save_state(
+        DowTimeframeState(
+            symbol="01347.HK",
+            market="hk",
+            timeframe="5m",
+            freshness_state="LIVE",
+            source_timestamp=NOW,
+            snapshot={"operation": "持有"},
+            chart={},
+            updated_at=NOW,
+        )
+    )
+    lock_held = Event()
+    release_lock = Event()
+    read_completed = Event()
+
+    def hold_writer_lock() -> None:
+        with store._lock:
+            lock_held.set()
+            release_lock.wait(timeout=2)
+
+    def read_snapshot() -> None:
+        store.list_states()
+        read_completed.set()
+
+    writer = Thread(target=hold_writer_lock)
+    reader = Thread(target=read_snapshot)
+    writer.start()
+    assert lock_held.wait(timeout=1)
+    reader.start()
+    try:
+        assert read_completed.wait(timeout=0.2)
+    finally:
+        release_lock.set()
+        writer.join(timeout=1)
+        reader.join(timeout=1)
 
 
 def test_detail_validates_timeframe_and_preserves_long_term_sidecar(tmp_path) -> None:
