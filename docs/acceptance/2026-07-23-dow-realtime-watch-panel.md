@@ -142,3 +142,24 @@ DOM 与可视检查。运行镜像为
 完整前端回归为 `26 passed / 98 passed`，生产构建和规格检查均通过。容器切换后
 `/health` 返回 `status=ok`，监控状态继续为 `running=true`、`source=webstock`、
 `last_error=null`。
+
+## 2026-07-24 价格对比度回归
+
+紧凑布局首次上线后，价格字号使用了 `text-base`。该项目同时在 Tailwind 主题中
+定义 `base` 背景色，编译后的歧义工具类不仅设置字号，还把价格颜色设为
+`hsl(var(--base))`，导致暗色卡片中数值接近黑色。修复改为无歧义的
+`text-[16px] text-foreground`。
+
+生产镜像
+`tickflow-stock-panel-app:dow-monitor-price-contrast-945a835-20260724-0931`
+中，`01347.HK` 实测结果为：
+
+- 价格文本：`146.00`；
+- 价格计算颜色：`rgb(250, 250, 250)`；
+- 卡片计算背景：`rgb(24, 24, 27)`；
+- 价格字号：`16px`；
+- 价格元素不再包含 `text-base`。
+
+新增回归测试先在原实现上 RED，明确收到
+`shrink-0 font-mono text-base tabular-nums`；单点修复后监控页 28 项测试和完整
+前端 99 项测试全部通过，生产构建、规格检查和 `/health` 均通过。

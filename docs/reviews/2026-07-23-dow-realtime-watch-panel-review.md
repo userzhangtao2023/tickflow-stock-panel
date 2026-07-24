@@ -65,6 +65,26 @@ source 本身位于常规会话。对应测试覆盖当前 WATCH 与历史信号
 - QUALITY：PASS；
 - READY：YES。
 
+## 2026-07-24 价格主文字色修复复核
+
+独立复核确认问题来自 Tailwind 工具类命名冲突，而不是 WebStock 行情缺失或卡片
+背景色错误。`text-base` 在本项目中同时命中 16px 字号和主题 `base` 颜色；
+暗色主题的 `--base` 正是接近黑色的页面背景色。
+
+修复差异只包含：
+
+1. 价格类名改为 `text-[16px] text-foreground`；
+2. 新增回归测试，要求价格使用主文字色且禁止重新引入 `text-base`。
+
+生产 DOM 同时给出实际价格、前景色和背景色证据，未依赖截图作为唯一证明。
+后端、WebStock、K 线、趋势线和买卖点文件均未修改。最终复核：
+
+- Critical：0；
+- Important：0；
+- SPEC：PASS；
+- QUALITY：PASS；
+- READY：YES。
+
 复审提出的唯一 Minor 为健康脚本测试导入顺序，已在 `f7ad021` 机械修正；Ruff 和
 该脚本的 5 项测试随后通过。生产最终运行镜像为
 `tickflow-stock-panel-app:dow-monitor-short-side-0fdd9e7-20260723-2358`，
