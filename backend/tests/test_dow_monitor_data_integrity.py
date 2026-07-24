@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -13,6 +13,7 @@ from app.services.dow_monitor_data import (
 
 HK = ZoneInfo("Asia/Hong_Kong")
 SYMBOL = "01347.HK"
+US_SYMBOL = "AAPL.US"
 
 
 class _Provider:
@@ -32,11 +33,11 @@ class _Provider:
         return pl.DataFrame(self._rows)
 
 
-def _rows_through(last_minute: datetime) -> list[dict]:
+def _rows_through(last_minute: datetime, symbol: str = SYMBOL) -> list[dict]:
     session_date = last_minute.date()
     return [
-        {"symbol": SYMBOL, "datetime": minute}
-        for minute in sorted(expected_minutes(SYMBOL, session_date))
+        {"symbol": symbol, "datetime": minute}
+        for minute in sorted(expected_minutes(symbol, session_date))
         if minute <= last_minute.replace(tzinfo=None)
     ]
 
@@ -79,3 +80,63 @@ def test_closed_complete_session_remains_live() -> None:
 
     assert batch.freshness_by_symbol[SYMBOL].state == "LIVE"
     assert batch.gap_details[SYMBOL] == []
+
+
+def test_closed_session_with_zero_rows_is_not_live() -> None:
+    now = datetime(2026, 7, 24, 18, 0, tzinfo=HK)
+    batch = WebStockMonitorGateway(
+        _Provider([], now.astimezone(UTC)),
+        now_fn=lambda: now,
+    ).fetch(
+        [SYMBOL],
+        datetime(2026, 7, 24, 9, 30, tzinfo=HK),
+        now,
+    )
+
+    assert batch.freshness_by_symbol[SYMBOL].state == "STALE_DATA"
+    assert batch.freshness_by_symbol[SYMBOL].reason == "SESSION_GAP"
+    assert batch.gap_details[SYMBOL][0] == datetime(2026, 7, 24, 9, 30)
+    assert batch.gap_details[SYMBOL][-1] == datetime(2026, 7, 24, 15, 59)
+
+
+def test_weekend_check_detects_a_completely_missing_friday_session() -> None:
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=HK)
+    rows = _rows_through(datetime(2026, 7, 23, 15, 59, tzinfo=HK))
+    batch = WebStockMonitorGateway(
+        _Provider(rows, now.astimezone(UTC)),
+        now_fn=lambda: now,
+    ).fetch(
+        [SYMBOL],
+        datetime(2026, 7, 23, 9, 30, tzinfo=HK),
+        now,
+    )
+
+    assert batch.freshness_by_symbol[SYMBOL].reason == "SESSION_GAP"
+    friday_gaps = [
+        minute
+        for minute in batch.gap_details[SYMBOL]
+        if minute.date().isoformat() == "2026-07-24"
+    ]
+    assert friday_gaps[0] == datetime(2026, 7, 24, 9, 30)
+    assert friday_gaps[-1] == datetime(2026, 7, 24, 15, 59)
+
+
+def test_us_early_close_uses_the_actual_exchange_session() -> None:
+    ny = ZoneInfo("America/New_York")
+    now = datetime(2026, 11, 27, 14, 0, tzinfo=ny)
+    open_minute = datetime(2026, 11, 27, 9, 30, tzinfo=ny)
+    rows = [
+        {"symbol": US_SYMBOL, "datetime": open_minute + timedelta(minutes=offset)}
+        for offset in range(210)
+    ]
+    batch = WebStockMonitorGateway(
+        _Provider(rows, now.astimezone(UTC)),
+        now_fn=lambda: now,
+    ).fetch(
+        [US_SYMBOL],
+        datetime(2026, 11, 27, 9, 30, tzinfo=ny),
+        now,
+    )
+
+    assert batch.freshness_by_symbol[US_SYMBOL].state == "LIVE"
+    assert batch.gap_details[US_SYMBOL] == []

@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
+import pandas as pd
 import polars as pl
 
 from app.market_rules import market_for_symbol
@@ -85,6 +88,12 @@ _SESSION_POLICIES = {
     ),
 }
 
+_EXCHANGE_CALENDARS = {
+    "cn": "XSHG",
+    "hk": "XHKG",
+    "us": "XNYS",
+}
+
 
 def market_session_policy(symbol: str) -> MarketSessionPolicy:
     return _SESSION_POLICIES[market_for_symbol(symbol)]
@@ -98,14 +107,40 @@ def minute_range(local_date: date, start: time, end: time) -> Iterator[datetime]
         cursor += timedelta(minutes=1)
 
 
+@lru_cache(maxsize=None)
+def _calendar(market: str):
+    return xcals.get_calendar(_EXCHANGE_CALENDARS[market])
+
+
+def _local_naive(value: pd.Timestamp, zone: ZoneInfo) -> datetime:
+    return value.to_pydatetime().astimezone(zone).replace(tzinfo=None)
+
+
+@lru_cache(maxsize=4096)
+def _session_segments(symbol: str, local_date: date) -> tuple[tuple[datetime, datetime], ...]:
+    market = market_for_symbol(symbol)
+    calendar = _calendar(market)
+    if not calendar.is_session(local_date):
+        return ()
+    session = calendar.date_to_session(local_date)
+    zone = ZoneInfo(market_session_policy(symbol).timezone)
+    session_open = _local_naive(calendar.session_open(session), zone)
+    session_close = _local_naive(calendar.session_close(session), zone)
+    break_start = calendar.session_break_start(session)
+    break_end = calendar.session_break_end(session)
+    if pd.isna(break_start) or pd.isna(break_end):
+        return ((session_open, session_close),)
+    return (
+        (session_open, _local_naive(break_start, zone)),
+        (_local_naive(break_end, zone), session_close),
+    )
+
+
 def expected_minutes(symbol: str, local_date: date) -> set[datetime]:
-    if local_date.weekday() >= 5:
-        return set()
-    policy = market_session_policy(symbol)
     return {
         cursor
-        for session_start, session_end in policy.sessions
-        for cursor in minute_range(local_date, session_start, session_end)
+        for session_start, session_end in _session_segments(symbol, local_date)
+        for cursor in minute_range(local_date, session_start.time(), session_end.time())
     }
 
 
@@ -148,11 +183,26 @@ def _minute_local(value: object, zone: ZoneInfo) -> datetime | None:
     return parsed.astimezone(zone).replace(tzinfo=None)
 
 
-def _is_regular_session(now_local: datetime, policy: MarketSessionPolicy) -> bool:
-    if now_local.weekday() >= 5:
-        return False
-    local_time = now_local.time()
-    return any(start <= local_time < end for start, end in policy.sessions)
+def _is_regular_session(symbol: str, now_local: datetime) -> bool:
+    return any(
+        session_start <= now_local < session_end
+        for session_start, session_end in _session_segments(symbol, now_local.date())
+    )
+
+
+def _latest_completed_session_date(symbol: str, end_local: datetime) -> date | None:
+    calendar = _calendar(market_for_symbol(symbol))
+    try:
+        session = calendar.date_to_session(end_local.date(), direction="previous")
+    except ValueError:
+        return None
+    zone = ZoneInfo(market_session_policy(symbol).timezone)
+    if _local_naive(calendar.session_close(session), zone) > end_local:
+        try:
+            session = calendar.previous_session(session)
+        except ValueError:
+            return None
+    return session.date()
 
 
 def _expected_between(
@@ -332,21 +382,28 @@ class WebStockMonitorGateway:
                 and start_local <= local_time <= end_local
                 and local_time in expected_minutes(symbol, local_time.date())
             }
+            expected_dates = {local_time.date() for local_time in observed}
+            latest_completed_date = _latest_completed_session_date(symbol, end_local)
+            if (
+                latest_completed_date is not None
+                and start_local.date() <= latest_completed_date <= end_local.date()
+            ):
+                expected_dates.add(latest_completed_date)
             expected = _expected_between(
                 symbol,
                 start_local,
                 end_local,
-                {local_time.date() for local_time in observed},
+                expected_dates,
             )
             received = observed & expected
             latest_minute = max(received, default=None)
-            regular_session = _is_regular_session(now_local, policy)
+            regular_session = _is_regular_session(symbol, now_local)
             gap_limit = latest_minute if regular_session else end_local
             gaps = (
                 sorted(
                     value for value in expected if value <= gap_limit and value not in received
                 )
-                if latest_minute is not None
+                if gap_limit is not None
                 else []
             )
             gap_details[symbol] = gaps

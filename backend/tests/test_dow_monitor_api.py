@@ -60,6 +60,24 @@ def test_symbols_are_normalized_and_duplicate_add_is_idempotent(tmp_path) -> Non
     assert len(client.get("/api/dow-monitor/symbols").json()["symbols"]) == 1
 
 
+def test_symbol_feed_is_non_authoritative_until_a_valid_config_is_persisted(tmp_path) -> None:
+    service = _service(tmp_path)
+    client = _client(service)
+
+    assert client.get("/api/dow-monitor/symbols").json() == {
+        "authoritative": False,
+        "symbols": [],
+    }
+
+    client.post("/api/dow-monitor/symbols", json={"symbol": "01347.HK"})
+    client.delete("/api/dow-monitor/symbols/01347.HK")
+
+    assert client.get("/api/dow-monitor/symbols").json() == {
+        "authoritative": True,
+        "symbols": [],
+    }
+
+
 def test_zero_padded_hk_alias_cannot_create_a_duplicate_monitor(tmp_path) -> None:
     service = _service(tmp_path)
     client = _client(service)

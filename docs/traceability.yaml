@@ -78,3 +78,13 @@ requirements:
     acceptance:
       - {path: docs/acceptance/dow-data-integrity.md, type: semantic-acceptance}
       - {path: docs/reviews/dow-data-integrity.md, type: independent-review}
+  - id: REQ-DOW-MONITOR-FEED-AUTHORITY-001
+    specification: SPEC-DOW-DATA-INTEGRITY-001
+    implementation:
+      - backend/app/api/dow_monitor.py
+      - backend/app/services/dow_monitor_store.py
+    tests:
+      - {path: tests/spec_contracts/test_dow_data_integrity_contract.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-data-integrity.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-data-integrity.md, type: independent-review}

@@ -23,5 +23,6 @@ specifications:
     requirements:
       - REQ-DOW-DATA-INTEGRITY-001
       - REQ-DOW-MULTITIMEFRAME-WINDOW-001
+      - REQ-DOW-MONITOR-FEED-AUTHORITY-001
 conflicts: []
 exceptions: []

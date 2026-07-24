@@ -38,6 +38,23 @@ class DowMonitorStore:
         with self._lock:
             return self._load_models(self._symbols_path, MonitoredSymbol)
 
+    def load_symbol_feed(self) -> tuple[bool, list[MonitoredSymbol]]:
+        with self._lock:
+            symbols = self._load_models(self._symbols_path, MonitoredSymbol)
+            if not self._symbols_path.is_file():
+                return False, symbols
+            try:
+                payload = json.loads(self._symbols_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False, symbols
+            if not isinstance(payload, list):
+                return False, symbols
+            try:
+                strict_symbols = [MonitoredSymbol.model_validate(item) for item in payload]
+            except (TypeError, ValueError):
+                return False, symbols
+            return True, strict_symbols
+
     def upsert_symbol(
         self,
         symbol: str,

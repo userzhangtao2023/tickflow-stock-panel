@@ -44,8 +44,10 @@ def _symbol_and_market(raw_symbol: str) -> tuple[str, Literal["cn", "hk", "us"]]
 
 @router.get("/symbols")
 def list_symbols(request: Request) -> dict:
+    authoritative, symbols = _service(request).store.load_symbol_feed()
     return {
-        "symbols": [item.model_dump(mode="json") for item in _service(request).store.list_symbols()]
+        "authoritative": authoritative,
+        "symbols": [item.model_dump(mode="json") for item in symbols],
     }
 
 
