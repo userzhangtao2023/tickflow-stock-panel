@@ -737,6 +737,7 @@ export function Screener() {
                     cardSize={cardSize}
                     onRun={() => { handleStrategySwitch(s.id); setActiveStrategy(s.id); setShowAll(false); setResult(null) }}
                     disabled={false}
+                    onSettings={() => setSettingsStrategyId(s.id)}
                   />
                 )
               }
