@@ -205,6 +205,31 @@ def _latest_completed_session_date(symbol: str, end_local: datetime) -> date | N
     return session.date()
 
 
+def _latest_prior_session_date(symbol: str, end_local_date: date) -> date | None:
+    calendar = _calendar(market_for_symbol(symbol))
+    try:
+        session = calendar.date_to_session(end_local_date, direction="previous")
+        if session.date() >= end_local_date:
+            session = calendar.previous_session(session)
+    except ValueError:
+        return None
+    return session.date()
+
+
+def latest_monitor_session_start(symbol: str, reference: datetime) -> datetime:
+    _require_aware(reference, "reference")
+    policy = market_session_policy(symbol)
+    zone = ZoneInfo(policy.timezone)
+    reference_local = _as_market_local(reference, zone)
+    calendar = _calendar(market_for_symbol(symbol))
+    session = calendar.date_to_session(reference_local.date(), direction="previous")
+    session_open = _local_naive(calendar.session_open(session), zone)
+    if session_open > reference_local:
+        session = calendar.previous_session(session)
+        session_open = _local_naive(calendar.session_open(session), zone)
+    return session_open.replace(tzinfo=zone).astimezone(UTC)
+
+
 def _expected_between(
     symbol: str,
     start: datetime,
@@ -320,10 +345,7 @@ class WebStockMonitorGateway:
                 if local_time.date() < end_local_date
                 and local_time in expected_minutes(symbol, local_time.date())
             }
-            latest_prior_date = max(
-                (local_time.date() for local_time in prior_session_times),
-                default=None,
-            )
+            latest_prior_date = _latest_prior_session_date(symbol, end_local_date)
             complete = False
             reason: HistoryIncompleteReason | None = "NO_PRIOR_SESSION"
             if latest_prior_date is not None:
@@ -383,6 +405,13 @@ class WebStockMonitorGateway:
                 and local_time in expected_minutes(symbol, local_time.date())
             }
             expected_dates = {local_time.date() for local_time in observed}
+            if any(
+                session_start <= end_local
+                for session_start, _session_end in _session_segments(
+                    symbol, end_local.date()
+                )
+            ):
+                expected_dates.add(end_local.date())
             latest_completed_date = _latest_completed_session_date(symbol, end_local)
             if (
                 latest_completed_date is not None

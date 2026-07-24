@@ -22,6 +22,20 @@ def test_closed_session_tail_behavioral_suite() -> None:
     )
 
 
+def test_monitor_symbol_authority_behavioral_suite() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "backend/tests/test_dow_monitor_api.py",
+            "-q",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+
 def test_dow_mini_chart_window_behavioral_suite() -> None:
     subprocess.run(
         [

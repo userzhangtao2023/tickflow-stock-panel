@@ -19,7 +19,7 @@ dependencies = [
     "pyarrow>=16.0",
     "redis>=5.0,<6.0",
     "psycopg[binary]>=3.1",       # PostgreSQL → ClickHouse 财务迁移工具
-    "pandas>=2.2",                # 仅在 BacktestService 边界使用,见 §7.4 / ADR-19
+    "pandas>=2.2",                # BacktestService 与交易日历边界
     "exchange-calendars>=4.11,<5",
     "psutil>=5.9",                # 独立回测 worker 的峰值 RSS 与退出后内存指标
     # llvmlite 不再提供 macOS Intel wheel；该平台使用 Matrix 纯 Python fallback。

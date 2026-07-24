@@ -19,9 +19,11 @@ session, the existing quote and minute maximum-age checks remain authoritative
 for a missing live tail.
 
 The gateway MUST use a date-aware exchange calendar for trading days, holidays,
-lunch breaks, and early closes. After a session closes, a completely missing
-latest session MUST NOT be classified as `LIVE`, including when checked on a
-weekend.
+lunch breaks, and early closes. A completed morning segment MUST be checked
+during a lunch break. After a session closes, a completely missing latest
+session MUST NOT be classified as `LIVE`, including on a weekend or holiday
+cold start. Historical coverage MUST compare with the calendar's latest prior
+session rather than silently accepting an older observed session.
 
 ## REQ-DOW-MULTITIMEFRAME-WINDOW-001
 

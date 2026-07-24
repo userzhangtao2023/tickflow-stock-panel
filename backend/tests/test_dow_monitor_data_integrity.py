@@ -9,6 +9,8 @@ from app.services.dow_monitor_data import (
     WebStockMonitorGateway,
     expected_minutes,
 )
+from app.services.dow_monitor_models import MonitoredSymbol
+from app.services.dow_monitor_service import DowMonitorService
 
 
 HK = ZoneInfo("Asia/Hong_Kong")
@@ -119,6 +121,87 @@ def test_weekend_check_detects_a_completely_missing_friday_session() -> None:
     ]
     assert friday_gaps[0] == datetime(2026, 7, 24, 9, 30)
     assert friday_gaps[-1] == datetime(2026, 7, 24, 15, 59)
+
+
+def test_weekend_cold_start_queries_and_validates_the_latest_completed_session() -> None:
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=HK)
+
+    class ColdStore:
+        @staticmethod
+        def get_state(symbol: str, timeframe: str):
+            return None
+
+    service = DowMonitorService(ColdStore(), None, None, lambda *_args: pl.DataFrame())
+    monitored = MonitoredSymbol(
+        symbol=SYMBOL,
+        market="hk",
+        enabled=True,
+        created_at=now.astimezone(UTC),
+        updated_at=now.astimezone(UTC),
+    )
+    starts, cold_symbols = service._fetch_plan([monitored], now.astimezone(UTC))
+
+    assert cold_symbols == {SYMBOL}
+    assert starts[SYMBOL].astimezone(HK) == datetime(2026, 7, 24, 9, 30, tzinfo=HK)
+
+    batch = WebStockMonitorGateway(
+        _Provider([], now.astimezone(UTC)),
+        now_fn=lambda: now,
+    ).fetch_since(starts, now)
+    assert batch.freshness_by_symbol[SYMBOL].reason == "SESSION_GAP"
+    assert batch.gap_details[SYMBOL][0] == datetime(2026, 7, 24, 9, 30)
+    assert batch.gap_details[SYMBOL][-1] == datetime(2026, 7, 24, 15, 59)
+
+
+def test_history_coverage_does_not_accept_thursday_when_friday_is_missing() -> None:
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=HK)
+    history = WebStockMonitorGateway(
+        _Provider(
+            _rows_through(datetime(2026, 7, 23, 15, 59, tzinfo=HK)),
+            now.astimezone(UTC),
+        ),
+        now_fn=lambda: now,
+    ).load_history([SYMBOL], now)
+
+    coverage = history.coverage_by_symbol[SYMBOL]
+    assert coverage.latest_prior_session_date.isoformat() == "2026-07-24"
+    assert coverage.state == "INCOMPLETE"
+    assert coverage.reason == "LATEST_PRIOR_SESSION_INCOMPLETE"
+
+
+def test_lunch_break_with_zero_morning_rows_is_not_live() -> None:
+    now = datetime(2026, 7, 24, 12, 30, tzinfo=HK)
+    batch = WebStockMonitorGateway(
+        _Provider([], now.astimezone(UTC)),
+        now_fn=lambda: now,
+    ).fetch(
+        [SYMBOL],
+        datetime(2026, 7, 24, 9, 30, tzinfo=HK),
+        now,
+    )
+
+    assert batch.freshness_by_symbol[SYMBOL].reason == "SESSION_GAP"
+    assert batch.gap_details[SYMBOL][0] == datetime(2026, 7, 24, 9, 30)
+    assert batch.gap_details[SYMBOL][-1] == datetime(2026, 7, 24, 11, 59)
+
+
+def test_lunch_break_reports_missing_morning_minutes() -> None:
+    now = datetime(2026, 7, 24, 12, 30, tzinfo=HK)
+    batch = WebStockMonitorGateway(
+        _Provider(
+            [{"symbol": SYMBOL, "datetime": datetime(2026, 7, 24, 9, 30, tzinfo=HK)}],
+            now.astimezone(UTC),
+        ),
+        now_fn=lambda: now,
+    ).fetch(
+        [SYMBOL],
+        datetime(2026, 7, 24, 9, 30, tzinfo=HK),
+        now,
+    )
+
+    assert batch.freshness_by_symbol[SYMBOL].reason == "SESSION_GAP"
+    assert batch.gap_details[SYMBOL][0] == datetime(2026, 7, 24, 9, 31)
+    assert batch.gap_details[SYMBOL][-1] == datetime(2026, 7, 24, 11, 59)
 
 
 def test_us_early_close_uses_the_actual_exchange_session() -> None:

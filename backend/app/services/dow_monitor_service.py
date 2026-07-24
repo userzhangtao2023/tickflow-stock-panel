@@ -25,7 +25,11 @@ from app.services.dow_monitor_client import (
     DowLongTermSnapshot,
     DowSnapshot,
 )
-from app.services.dow_monitor_data import WebStockBatch, market_session_policy
+from app.services.dow_monitor_data import (
+    WebStockBatch,
+    latest_monitor_session_start,
+    market_session_policy,
+)
 from app.services.dow_monitor_indicators import enrich_dow_chart_bars
 from app.services.dow_monitor_models import (
     DowNotification,
@@ -758,16 +762,7 @@ class DowMonitorService:
                 state = self.store.get_state(item.symbol, timeframe)
                 if state is None or state.source_timestamp is None:
                     cold_symbols.add(item.symbol)
-                    policy = market_session_policy(item.symbol)
-                    zone = ZoneInfo(policy.timezone)
-                    local_now = now.astimezone(zone)
-                    local_midnight = local_now.replace(
-                        hour=0,
-                        minute=0,
-                        second=0,
-                        microsecond=0,
-                    )
-                    starts[item.symbol] = local_midnight.astimezone(UTC)
+                    starts[item.symbol] = latest_monitor_session_start(item.symbol, now)
                     break
                 timestamps.append(state.source_timestamp)
             else:
