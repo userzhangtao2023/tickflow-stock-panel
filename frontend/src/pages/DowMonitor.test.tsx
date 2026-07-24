@@ -363,6 +363,14 @@ describe('Dow monitor page', () => {
     expect(within(unnamed).getAllByText('INTC.US')).toHaveLength(1)
   })
 
+  it('renders the stock price with the theme foreground instead of the base background color', () => {
+    render(<DowMonitor />)
+
+    const price = within(screen.getByTestId('card-01347.HK')).getByText('13.47')
+    expect(price).toHaveClass('text-[16px]', 'text-foreground')
+    expect(price).not.toHaveClass('text-base')
+  })
+
   it('keeps a compact two-row summary and gives the mini K-line 180 pixels', () => {
     render(<DowMonitor />)
 

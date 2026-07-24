@@ -172,7 +172,7 @@ export function DowMonitorCard({
         </button>
 
         <div className="col-span-3 row-start-2 mt-0.5 flex min-w-0 items-baseline gap-2 overflow-hidden">
-          <span className="shrink-0 font-mono text-base tabular-nums">
+          <span className="shrink-0 font-mono text-[16px] text-foreground tabular-nums">
             {price == null ? '—' : price.toFixed(2)}
           </span>
           {change != null && (
