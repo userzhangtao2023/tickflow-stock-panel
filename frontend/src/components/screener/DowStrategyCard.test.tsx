@@ -64,7 +64,7 @@ describe('DowStrategyCard', () => {
     await userEvent.click(screen.getByRole('button', { name: '执行选股' }))
     expect(await screen.findByText('港股选股完成，当前暂无符合条件的股票')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '执行选股' }))
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(6)
   })
 
   it('publishes local and long-term period matches as shared-list row data', async () => {
