@@ -1,39 +1,132 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Activity, ChevronDown, ChevronUp, Play, TestTube2 } from 'lucide-react'
+import { Activity, Play } from 'lucide-react'
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<{ ok: boolean; json: () => Promise<any> }>
-type Stock = { symbol: string; name: string; market?: string; strategyScore: number; triggerTimeframes: string[]; localTriggerTimeframes?: string[]; longTermTriggerTimeframes?: string[]; formalTimeframes?: string[]; provisionalTimeframes?: string[]; dataFreshness?: string }
-type DetailState = { available: boolean; action?: string; phase?: string; bar_completion?: string; reason?: string; match_type?: 'FORMAL' | 'PROVISIONAL' | 'NONE'; matched_bar_time?: string; matched_bar_offset?: number; matched_snapshot?: { phase?: string } | null }
-type Detail = { timeframeStates: Record<string, DetailState>; formalTimeframes?: string[]; provisionalTimeframes?: string[]; dataFreshness?: string }
-type ScanJob = { runId: string; status: 'queued' | 'running' | 'complete' | 'failed'; completed?: number; total?: number; selected?: number; failed?: number; currentSymbol?: string; error?: string }
+type Stock = {
+  symbol: string
+  name: string
+  market?: string
+  totalScore?: number
+  strategyScore?: number
+  lastDone?: number | null
+  triggerTimeframes?: string[]
+  localTriggerTimeframes?: string[]
+  longTermTriggerTimeframes?: string[]
+  formalTimeframes?: string[]
+  provisionalTimeframes?: string[]
+  signalTime?: string
+  calculatedAt?: string
+  dataFreshness?: string
+}
+type ScanJob = {
+  runId: string
+  status: 'queued' | 'running' | 'complete' | 'failed'
+  completed?: number
+  total?: number
+  selected?: number
+  failed?: number
+  currentSymbol?: string
+  error?: string
+}
+
+export type DowScreenerRow = {
+  symbol: string
+  name: string
+  market?: string
+  score: number | null
+  close: number | null
+  strategy_summary: string
+  trigger_timeframes: string[]
+  local_trigger_timeframes: string[]
+  long_term_trigger_timeframes: string[]
+  formal_timeframes: string[]
+  provisional_timeframes: string[]
+  signal_time: string
+  calculated_at: string
+  data_freshness: string
+}
+
+export type DowScreenerResult = {
+  rows: DowScreenerRow[]
+  total: number
+  asOf: string
+}
+
 export const DOW_TREND_STRATEGY_ID = 'dow_trend'
-const periods = [['5m', '5分钟'], ['15m', '15分钟'], ['30m', '30分钟'], ['60m', '60分钟'], ['day', '日线']] as const
 const marketNames: Record<string, string> = { cn: 'A股', hk: '港股', us: '美股', all: '全部市场' }
 const periodLabel = (period: string) => period === 'day' ? '日线' : period
-const matchLabel = (type?: string) => type === 'FORMAL' ? '正式买点' : type === 'PROVISIONAL' ? '盘中候选' : ''
-const offsetLabel = (offset?: number) => offset === 0 ? '当前' : typeof offset === 'number' ? `前 ${offset} 根` : ''
+const ignoreResults = () => undefined
 
-export function DowStrategyCard({ market, fetcher = fetch }: { market: string; fetcher?: Fetcher }) {
-  const [open, setOpen] = useState(true)
-  const [stocks, setStocks] = useState<Stock[]>([])
-  const [selected, setSelected] = useState('')
-  const [detail, setDetail] = useState<Detail | null>(null)
-  const [metrics, setMetrics] = useState<any>(null)
+function triggerSummary(stock: Stock): string {
+  const local = stock.localTriggerTimeframes ?? stock.triggerTimeframes ?? []
+  const longTerm = stock.longTermTriggerTimeframes ?? []
+  return [
+    local.length ? `局部 ${local.map(periodLabel).join(' + ')}` : '',
+    longTerm.length ? `长期 ${longTerm.map(periodLabel).join(' + ')}` : '',
+  ].filter(Boolean).join(' · ')
+}
+
+export function toDowScreenerRows(stocks: Stock[]): DowScreenerRow[] {
+  return stocks.map(stock => ({
+    symbol: stock.symbol,
+    name: stock.name,
+    market: stock.market,
+    score: stock.strategyScore ?? stock.totalScore ?? null,
+    close: stock.lastDone ?? null,
+    strategy_summary: triggerSummary(stock),
+    trigger_timeframes: stock.triggerTimeframes ?? [],
+    local_trigger_timeframes: stock.localTriggerTimeframes ?? [],
+    long_term_trigger_timeframes: stock.longTermTriggerTimeframes ?? [],
+    formal_timeframes: stock.formalTimeframes ?? [],
+    provisional_timeframes: stock.provisionalTimeframes ?? [],
+    signal_time: stock.signalTime ?? '',
+    calculated_at: stock.calculatedAt ?? '',
+    data_freshness: stock.dataFreshness ?? '',
+  }))
+}
+
+function resultDate(payload: any, rows: DowScreenerRow[]): string {
+  const candidate = payload?.metrics?.scoreDate ?? rows[0]?.signal_time ?? ''
+  return String(candidate).slice(0, 10)
+}
+
+export function DowStrategyCard({
+  market,
+  fetcher = fetch,
+  onResults = ignoreResults,
+}: {
+  market: string
+  fetcher?: Fetcher
+  onResults?: (result: DowScreenerResult | null) => void
+}) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [matchedCount, setMatchedCount] = useState(0)
   const [job, setJob] = useState<ScanJob | null>(null)
 
   const loadPool = useCallback(async () => {
     const response = await fetcher(`/api/dow-strategy/pool?market=${market}&limit=80`)
     if (!response.ok) throw new Error('道氏策略服务暂不可用')
-    const payload = await response.json(); setStocks(payload.stocks ?? []); setLoaded(true)
-  }, [fetcher, market])
+    const payload = await response.json()
+    const rows = toDowScreenerRows(payload.stocks ?? [])
+    setMatchedCount(rows.length)
+    setLoaded(true)
+    onResults({ rows, total: rows.length, asOf: resultDate(payload, rows) })
+  }, [fetcher, market, onResults])
 
   const run = useCallback(async () => {
-    setLoading(true); setError(''); setLoaded(false)
+    setLoading(true)
+    setError('')
+    setLoaded(false)
+    setMatchedCount(0)
+    onResults(null)
     try {
-      const response = await fetcher('/api/dow-strategy/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ market }) })
+      const response = await fetcher('/api/dow-strategy/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ market }),
+      })
       if (!response.ok) throw new Error('无法启动道氏策略选股')
       let current = await response.json() as ScanJob
       if (!current.runId) throw new Error('选股任务未返回任务编号')
@@ -47,42 +140,51 @@ export function DowStrategyCard({ market, fetcher = fetch }: { market: string; f
       }
       if (current.status === 'failed') throw new Error(current.error || '道氏策略选股失败')
       await loadPool()
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '选股失败') } finally { setLoading(false) }
-  }, [fetcher, loadPool, market])
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '选股失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [fetcher, loadPool, market, onResults])
 
   useEffect(() => {
-    setStocks([]); setSelected(''); setDetail(null); setMetrics(null); setError(''); setLoaded(false); setJob(null)
-  }, [market])
-  const inspect = async (symbol: string) => {
-    setSelected(symbol); setMetrics(null)
-    const response = await fetcher(`/api/dow-strategy/${encodeURIComponent(symbol)}`)
-    if (response.ok) setDetail(await response.json())
-  }
-  const backtest = async () => {
-    if (!selected) return
-    setLoading(true); setError('')
-    try {
-      const end = new Date(); const start = new Date(); start.setDate(start.getDate() - 90)
-      const selectedMarket = stocks.find(stock => stock.symbol === selected)?.market?.toLowerCase() ?? market
-      const response = await fetcher('/api/dow-strategy/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ market: selectedMarket === 'all' ? 'cn' : selectedMarket, symbols: [selected], start: start.toISOString(), end: end.toISOString(), initialCash: 100000, feeBps: 2, slippageBps: 3 }) })
-      if (!response.ok) throw new Error('回测服务暂不可用')
-      setMetrics((await response.json()).metrics)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '回测失败') } finally { setLoading(false) }
-  }
+    setError('')
+    setLoaded(false)
+    setMatchedCount(0)
+    setJob(null)
+    onResults(null)
+  }, [market, onResults])
 
-  return <section className="rounded-card border border-cyan-400/25 bg-surface overflow-hidden">
-    <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-      <button type="button" className="flex items-center gap-2 text-left" onClick={() => setOpen(value => !value)}><Activity className="h-4 w-4 text-cyan-400" /><span><b className="block text-sm text-foreground">道氏趋势 · 多周期</b><small className="text-muted">5/15/30/60分钟及日线最近4根K线买点</small></span>{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
-      <button type="button" onClick={() => void run()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-btn bg-cyan-500/15 border border-cyan-400/30 px-3 py-2 text-xs text-cyan-300"><Play className="h-3.5 w-3.5" />{loading ? '执行中…' : '执行选股'}</button>
-    </div>
-    {open && <div className="border-t border-border p-4 space-y-3">
-      {error && <p className="text-xs text-danger">{error}</p>}
-      {!loaded && !loading && !error && <p className="text-xs text-muted">点击“执行选股”开始扫描</p>}
-      {loading && job && <p className="text-xs text-cyan-300">正在扫描{marketNames[market] ?? market}：{job.completed ?? 0}/{job.total ?? 0}{job.currentSymbol ? ` · ${job.currentSymbol}` : ''}</p>}
-      {loaded && <p className="text-xs text-cyan-300">{stocks.length > 0 ? `${marketNames[market] ?? market}选股完成，共 ${stocks.length} 只` : `${marketNames[market] ?? market}选股完成，当前暂无符合条件的股票`}</p>}
-      <div className="flex gap-2 overflow-x-auto pb-1">{stocks.map(stock => { const local = stock.localTriggerTimeframes ?? stock.triggerTimeframes ?? []; const longTerm = stock.longTermTriggerTimeframes ?? []; const sourceLabel = [local.length ? `局部 ${local.map(periodLabel).join(' + ')}` : '', longTerm.length ? `长期 ${longTerm.map(periodLabel).join(' + ')}` : ''].filter(Boolean).join(' · '); return <button type="button" key={stock.symbol} onClick={() => void inspect(stock.symbol)} className={`min-w-[150px] rounded-btn border p-3 text-left ${selected === stock.symbol ? 'border-cyan-400 bg-cyan-400/10' : 'border-border bg-base'}`}><b className="block text-xs">{stock.symbol} · {stock.name}</b><span className="text-[11px] text-cyan-300">{sourceLabel}</span><small className="block text-muted">评分 {stock.strategyScore?.toFixed?.(1) ?? '-'}</small></button> })}</div>
-      {detail && <><div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">{periods.map(([key, label]) => { const state = detail.timeframeStates?.[key]; const matched = matchLabel(state?.match_type); const offset = offsetLabel(state?.matched_bar_offset); return <div key={key} className="rounded-btn border border-border bg-base p-3"><b className="text-xs">{label}</b><strong className="block mt-1 text-cyan-300 text-xs">{state?.available ? matched || state.action || 'WATCH' : '不可用'}</strong>{state?.available && matched && <small className="block text-cyan-300">{offset}{state.matched_bar_time ? ` · ${state.matched_bar_time}` : ''}</small>}<small className="block text-muted">{state?.available ? `${state.matched_snapshot?.phase ?? state.phase ?? '-'} · 当前 ${state.action ?? 'WATCH'} ${state.bar_completion ?? ''}` : state?.reason ?? '-'}</small></div> })}</div><button type="button" onClick={() => void backtest()} className="inline-flex items-center gap-1.5 rounded-btn border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-300"><TestTube2 className="h-3.5 w-3.5" />回测当前股票</button></>}
-      {metrics && <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs"><span>累计收益<b className="block text-foreground">{(metrics.cumulativeReturn * 100).toFixed(2)}%</b></span><span>最大回撤<b className="block text-foreground">{(metrics.maximumDrawdown * 100).toFixed(2)}%</b></span><span>胜率<b className="block text-foreground">{(metrics.winRate * 100).toFixed(2)}%</b></span><span>交易次数<b className="block text-foreground">{metrics.tradeCount}</b></span></div>}
-    </div>}
-  </section>
+  const status = error
+    ? error
+    : loading && job
+      ? `正在扫描${marketNames[market] ?? market}：${job.completed ?? 0}/${job.total ?? 0}${job.currentSymbol ? ` · ${job.currentSymbol}` : ''}`
+      : loaded
+        ? matchedCount > 0
+          ? `${marketNames[market] ?? market}选股完成，共 ${matchedCount} 只；结果已载入下方列表`
+          : `${marketNames[market] ?? market}选股完成，当前暂无符合条件的股票`
+        : '点击“执行选股”开始扫描'
+
+  return (
+    <section className="flex flex-wrap items-center justify-between gap-3 border-y border-border py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Activity className="h-4 w-4 shrink-0 text-cyan-400" />
+        <span className="min-w-0">
+          <b className="block text-sm text-foreground">道氏趋势 · 多周期</b>
+          <small className={error ? 'text-danger' : loading || loaded ? 'text-cyan-300' : 'text-muted'}>
+            {status}
+          </small>
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-btn border border-cyan-400/30 bg-cyan-500/15 px-3 py-2 text-xs text-cyan-300 disabled:cursor-wait disabled:opacity-60"
+      >
+        <Play className="h-3.5 w-3.5" />
+        {loading ? '执行中…' : '执行选股'}
+      </button>
+    </section>
+  )
 }

@@ -262,11 +262,13 @@ export function ScreenerTable({
       case 'strategies': {
         const strats = symbolStrategyMap.get(r.symbol) ?? (activeStrategy ? [activeStrategy] : [])
         const tags = strats.map(sid => strategyIdToName[sid] ?? sid)
+        const strategySummary = typeof r.strategy_summary === 'string' ? r.strategy_summary.trim() : ''
         const cellKey = `${r.symbol}::${col.id}`
         const expanded = expandedCells.has(cellKey)
         return (
           <td key={col.id} className="px-3 py-2">
             {renderTagList(tags, col, expanded, () => toggleExpand(cellKey), STRATEGY_TAG_CLS)}
+            {strategySummary && <small className="mt-1 block whitespace-nowrap text-[10px] text-muted">{strategySummary}</small>}
           </td>
         )
       }

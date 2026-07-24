@@ -16,7 +16,11 @@ import { DatePicker } from '@/components/DatePicker'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { useStrategyPool } from '@/lib/useStrategyPool'
 import { StrategyCard, CardSize, loadCardSize, cardWrapCls } from '@/components/screener/StrategyCard'
-import { DowStrategyCard, DOW_TREND_STRATEGY_ID } from '@/components/screener/DowStrategyCard'
+import {
+  DowStrategyCard,
+  DOW_TREND_STRATEGY_ID,
+  type DowScreenerResult,
+} from '@/components/screener/DowStrategyCard'
 import { ScreenerTable } from '@/components/screener/ScreenerTable'
 import { ScreenerFilter as ScreenerFilterType, defaultFilter, filterActive, countActiveFilters, applyFilter, FilterPanel } from '@/components/screener/ScreenerFilter'
 import { StrategySettingsDialog } from '@/components/screener/StrategySettingsDialog'
@@ -574,6 +578,21 @@ export function Screener() {
     })
   }
 
+  const handleDowResults = useCallback((dowResult: DowScreenerResult | null) => {
+    if (!dowResult) {
+      setResult(null)
+      return
+    }
+    setResult({
+      as_of: dowResult.asOf,
+      strategy: DOW_TREND_STRATEGY_ID,
+      rows: dowResult.rows,
+      total: dowResult.total,
+      elapsed_ms: 0,
+    })
+    setHitCounts(prev => ({ ...prev, [DOW_TREND_STRATEGY_ID]: dowResult.total }))
+  }, [])
+
 
   return (
     <>
@@ -745,7 +764,9 @@ export function Screener() {
         </section>
         )}
 
-        {activeStrategy === DOW_TREND_STRATEGY_ID && <DowStrategyCard market={marketFilter} />}
+        {activeStrategy === DOW_TREND_STRATEGY_ID && (
+          <DowStrategyCard market={marketFilter} onResults={handleDowResults} />
+        )}
 
         {/* 结果 */}
         <section>
