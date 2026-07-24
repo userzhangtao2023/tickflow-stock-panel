@@ -19,6 +19,7 @@ const RESISTANCE_MAGENTA = '#D946EF'
 const LONG_TERM_AMBER = '#F59E0B'
 const BUY_GREEN = '#22C55E'
 const SELL_RED = '#EF4444'
+const MINI_CHART_BAR_LIMIT = 80
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -109,7 +110,7 @@ export function buildDowMiniChartOption(
     grid: 'rgba(255,255,255,0.06)',
   },
 ): EChartsOption {
-  const bars = validBars(chart)
+  const bars = validBars(chart).slice(-MINI_CHART_BAR_LIMIT)
   const backendLines = validLines(chart)
   const backendSignals = validSignals(chart, bars)
   const lineSeries: Array<Record<string, unknown>> = backendLines.map(line => {

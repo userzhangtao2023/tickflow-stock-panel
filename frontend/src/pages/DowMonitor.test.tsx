@@ -1045,6 +1045,36 @@ describe('Dow monitor page', () => {
 })
 
 describe('Dow mini chart semantics', () => {
+  it('renders only the latest 80 valid bars and signals in the same window', () => {
+    const longBars = Array.from({ length: 100 }, (_, index) => ({
+      index,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      open: index,
+      high: index + 2,
+      low: index - 1,
+      close: index + 1,
+      volume: index + 10,
+    }))
+    const option = buildDowMiniChartOption({
+      bars: longBars,
+      lines: [],
+      signals: [
+        { side: 'BUY', barTime: longBars[10].timestamp, price: 11 },
+        { side: 'SELL', barTime: longBars[99].timestamp, price: 100 },
+      ],
+    })
+    const xAxis = option.xAxis as Record<string, any>
+    const candles = (option.series as Array<Record<string, any>>)
+      .find(item => item.id === 'candles')
+
+    expect(xAxis.data).toHaveLength(80)
+    expect(xAxis.data[0]).toBe(longBars[20].timestamp)
+    expect(candles?.data).toHaveLength(80)
+    expect(candles?.markPoint.data).toEqual([
+      expect.objectContaining({ name: 'SELL' }),
+    ])
+  })
+
   it('uses solid blue/magenta main lines, dashed acceleration, and backend signal colors', () => {
     const option = buildDowMiniChartOption(authoritativeChart)
     const series = option.series as Array<Record<string, any>>

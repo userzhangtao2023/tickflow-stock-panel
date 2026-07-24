@@ -17,5 +17,11 @@ specifications:
     requirements:
       - REQ-DOW-WATCH-OVERVIEW-LOAD-001
       - REQ-DOW-WATCH-OVERVIEW-LOAD-002
+  - id: SPEC-DOW-DATA-INTEGRITY-001
+    path: docs/specs/dow-data-integrity.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-DATA-INTEGRITY-001
+      - REQ-DOW-MULTITIMEFRAME-WINDOW-001
 conflicts: []
 exceptions: []

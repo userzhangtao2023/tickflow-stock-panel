@@ -340,9 +340,11 @@ class WebStockMonitorGateway:
             )
             received = observed & expected
             latest_minute = max(received, default=None)
+            regular_session = _is_regular_session(now_local, policy)
+            gap_limit = latest_minute if regular_session else end_local
             gaps = (
                 sorted(
-                    value for value in expected if value <= latest_minute and value not in received
+                    value for value in expected if value <= gap_limit and value not in received
                 )
                 if latest_minute is not None
                 else []
@@ -353,7 +355,6 @@ class WebStockMonitorGateway:
                 source_times.append(latest_minute.replace(tzinfo=zone).astimezone(UTC))
 
             quote_time = _as_utc((quote_by_symbol.get(symbol) or {}).get("timestamp"))
-            regular_session = _is_regular_session(now_local, policy)
             reason: FreshnessReason | None = None
             if regular_session and (quote_time is None or now_utc - quote_time > QUOTE_MAX_AGE):
                 reason = "QUOTE_TOO_OLD"
