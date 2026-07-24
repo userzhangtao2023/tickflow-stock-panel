@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -964,15 +964,20 @@ class DowMonitorService:
                 notification.model_dump(mode="json"),
             )
 
+        persisted_states_by_symbol: dict[str, dict[str, DowTimeframeState]] = {}
+        for state in self.store.list_states():
+            persisted_states_by_symbol.setdefault(state.symbol, {})[state.timeframe] = state
+
         symbols = []
         source_timestamps: list[datetime] = []
         for item in self.store.list_symbols():
             if market != "all" and item.market != market:
                 continue
             quote = self._latest_quotes_by_symbol.get(item.symbol, {})
+            persisted_states = persisted_states_by_symbol.get(item.symbol, {})
             states = {}
             for timeframe in TIMEFRAMES:
-                state = self.store.get_state(item.symbol, timeframe)
+                state = persisted_states.get(timeframe)
                 if state is not None:
                     states[timeframe] = state.model_dump(mode="json")
                     if state.source_timestamp is not None:
@@ -987,7 +992,7 @@ class DowMonitorService:
                     "states": states,
                     "latest_notification": latest_by_symbol.get(item.symbol),
                     "last_success_at": self._as_json_time(
-                        self._last_success_for_symbol(item.symbol)
+                        self._last_success_for_symbol(item.symbol, persisted_states.values())
                     ),
                     "last_error": self._errors.get(item.symbol),
                 }
@@ -1056,13 +1061,18 @@ class DowMonitorService:
             raise ValueError("now_fn must return a timezone-aware datetime")
         return now
 
-    def _last_success_for_symbol(self, symbol: str) -> datetime | None:
+    def _last_success_for_symbol(
+        self,
+        symbol: str,
+        states: Iterable[DowTimeframeState | None] | None = None,
+    ) -> datetime | None:
         runtime = self._last_success_by_symbol.get(symbol)
         if runtime is not None:
             return runtime
+        if states is None:
+            states = (self.store.get_state(symbol, timeframe) for timeframe in TIMEFRAMES)
         persisted: list[datetime] = []
-        for timeframe in TIMEFRAMES:
-            state = self.store.get_state(symbol, timeframe)
+        for state in states:
             if state is not None and state.snapshot and state.source_timestamp is not None:
                 persisted.append(state.source_timestamp)
         return max(persisted, default=None)

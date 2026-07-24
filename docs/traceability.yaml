@@ -41,3 +41,13 @@ requirements:
     acceptance:
       - {path: docs/acceptance/realtime-ui-fast-path.md, type: semantic-acceptance}
       - {path: docs/reviews/realtime-ui-fast-path.md, type: independent-review}
+  - id: REQ-DOW-WATCH-OVERVIEW-LOAD-001
+    specification: SPEC-DOW-WATCH-OVERVIEW-LOAD-001
+    implementation:
+      - backend/app/services/dow_monitor_service.py
+      - backend/app/services/dow_monitor_store.py
+    tests:
+      - {path: tests/spec_contracts/test_dow_watch_overview_load_contract.py, type: executable-test}
+    acceptance:
+      - {path: docs/acceptance/dow-watch-overview-load.md, type: semantic-acceptance}
+      - {path: docs/reviews/dow-watch-overview-load.md, type: independent-review}

@@ -131,6 +131,48 @@ def test_overview_api_exposes_authoritative_quote_header_fields(tmp_path) -> Non
     assert {key: item[key] for key in expected} == expected
 
 
+def test_overview_loads_persisted_state_collection_once(tmp_path) -> None:
+    class CountingStore(DowMonitorStore):
+        state_file_reads = 0
+
+        def _load_models(self, path, model_type):
+            if path == self._states_path:
+                self.state_file_reads += 1
+            return super()._load_models(path, model_type)
+
+    store = CountingStore(tmp_path)
+    service = DowMonitorService(
+        store,
+        _UnusedGateway(),
+        _UnusedDowClient(),
+        _daily_loader,
+        now_fn=lambda: NOW,
+    )
+    for symbol, market in (("01347.HK", "hk"), ("INTC.US", "us")):
+        store.upsert_symbol(symbol, market, True)
+        for timeframe in ("5m", "15m", "30m", "60m", "day"):
+            store.save_state(
+                DowTimeframeState(
+                    symbol=symbol,
+                    market=market,
+                    timeframe=timeframe,
+                    freshness_state="LIVE",
+                    source_timestamp=NOW,
+                    snapshot={"operation": "持有"},
+                    chart={},
+                    updated_at=NOW,
+                )
+            )
+
+    store.state_file_reads = 0
+    result = service.overview("all")
+
+    assert {item["symbol"] for item in result["symbols"]} == {"01347.HK", "INTC.US"}
+    assert all(len(item["states"]) == 5 for item in result["symbols"])
+    assert all(item["last_success_at"] == NOW.isoformat() for item in result["symbols"])
+    assert store.state_file_reads == 1
+
+
 def test_detail_validates_timeframe_and_preserves_long_term_sidecar(tmp_path) -> None:
     service = _service(tmp_path)
     service.store.upsert_symbol("01347.HK", "hk", True)

@@ -11,5 +11,10 @@ specifications:
     requirements:
       - REQ-REALTIME-UI-GATEWAY-001
       - REQ-REALTIME-UI-FALLBACK-001
+  - id: SPEC-DOW-WATCH-OVERVIEW-LOAD-001
+    path: docs/specs/dow-watch-overview-load.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-WATCH-OVERVIEW-LOAD-001
 conflicts: []
 exceptions: []

@@ -89,6 +89,10 @@ class DowMonitorStore:
             self._write_json(self._states_path, states)
             return state
 
+    def list_states(self) -> list[DowTimeframeState]:
+        with self._lock:
+            return self._load_models(self._states_path, DowTimeframeState)
+
     def get_state(self, symbol: str, timeframe: str) -> DowTimeframeState | None:
         with self._lock:
             for state in self._load_models(self._states_path, DowTimeframeState):
