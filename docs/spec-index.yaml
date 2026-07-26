@@ -33,6 +33,18 @@ specifications:
       - REQ-COLLECTION-MONITOR-PREACCEPTANCE-001
 conflicts: []
 exceptions:
+  - id: EXC-COLLECTION-MONITOR-HISTORY-REPAIR-001
+    scope: guarded operator repair of collection history, status compatibility, scheduler drift, and future ingestion idempotency
+    owner: user
+    reason: production audit found unreadable historical evidence, legacy status incompatibility, live Chronicle drift, and repeated physical writes
+    approval: explicit user directive on 2026-07-26
+    expires: 2026-07-28
+    supersedes_for_scope: EXC-COLLECTION-MONITOR-PREACCEPTANCE-DEPLOY-001
+    constraints:
+      - the Monitor Aggregator remains read-only
+      - Chronicle mutation is a backed-up operator action only
+      - Rust remains shadow until its existing cutover gate is accepted
+      - no claim of Monday live semantic acceptance
   - id: EXC-COLLECTION-MONITOR-PREACCEPTANCE-DEPLOY-001
     scope: observation-only deployment before Monday live semantic acceptance
     owner: user
