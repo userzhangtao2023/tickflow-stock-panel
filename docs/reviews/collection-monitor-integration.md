@@ -274,3 +274,30 @@ event-free:
 These disclosed operational exceptions do not identify a defect in the
 reviewed code and do not invalidate the exact final cutover evidence. They do
 prohibit an unqualified broader-window no-restart claim.
+
+## Dedicated SPA entry repair review
+
+Independent reviewer `/root/collection_entry_review` reviewed commit
+`61afee2448eeaeee54b43933b2de6244849fb2c7` against
+`REQ-COLLECTION-MONITOR-PAGE-001` and returned PASS for observation-only
+deployment readiness, with no P0 or P1 finding. The reviewer independently
+confirmed:
+
+- the exact collection-monitor route selects the dedicated entry;
+- trailing-slash behavior is covered;
+- other SPA routes retain the shared entry;
+- the image build creates the dedicated entry;
+- the relevant backend/contract suite passed (`50 passed, 1 skipped`);
+- the frontend focused wrapper, specification checker, and diff check passed.
+
+The reviewer identified two non-blocking limitations. The unit test does not
+itself boot the built image, so production evidence must confirm both entry
+files and route behavior; those checks are recorded in the acceptance record.
+Also, an external actor with permission to overwrite the dedicated entry or
+its referenced assets could still defeat this isolation. The repair protects
+against the observed shared-`index.html` hotpatch, not arbitrary mutation of
+all static files.
+
+This PASS applies to route availability and deployment readiness only. Live
+minute-bar, capital-flow, order-book, and order-size semantic acceptance
+remains pending for the trading session.

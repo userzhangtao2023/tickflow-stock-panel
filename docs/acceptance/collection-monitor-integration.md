@@ -262,3 +262,43 @@ substitute for lower-layer live collection acceptance.
 
 Deployment evidence: recorded and independently reviewed as pre-acceptance evidence.
 Live semantic evidence: pending.
+
+## Dedicated SPA entry repair and production evidence
+
+On 2026-07-26 the production `/collection-monitor` route returned the shared
+SPA entry, whose main bundle had been replaced by a separate runtime hotpatch.
+That bundle did not contain the collection-monitor route and React Router
+rendered `404 Not Found`. Commit `61afee2448eeaeee54b43933b2de6244849fb2c7`
+gave the route a dedicated build-time entry while leaving all other routes on
+the shared entry.
+
+The reviewed source produced image
+`sha256:6ad769449b22aed4ae110ecb6b47956dd855763ed137fd1e3dcd081c545bb66a`.
+An image-level check confirmed that `/app/static/index.html` and
+`/app/static/collection-monitor.html` both existed and initially referenced
+`assets/index-BSAEXa-n.js`.
+
+The first guarded cutover used a health window shorter than the application's
+cold-start interval and automatically restored the exact old container. After
+the old service returned healthy, the second guarded cutover succeeded:
+
+- active container:
+  `f05b0512fa778e309461e811a011e83c09a4d4c5ed2217f2d10e996784791e9f`;
+- restart count: `0`; state: `running`;
+- protected cutover backup:
+  `/home/alwin/backups/tickflow-collection-entry-cutover-20260726T060801Z`;
+- exact stopped rollback:
+  `TickFlow_Stock_Panel_pre_isolated_entry_20260726T060801Z`;
+- external HTTP 200:
+  `/health`, `/`, `/dow-monitor?market=hk`, `/collection-monitor`, and
+  `/assets/index-BSAEXa-n.js`;
+- `/`, `/dow-monitor?market=hk`, and `/collection-monitor` referenced the
+  reviewed `index-BSAEXa-n.js` at cutover;
+- the user's Chrome tab rendered the `采集监控` heading, filters, daily
+  overview, market matrix, task evidence, and gap evidence instead of the
+  prior router 404.
+
+The page truthfully showed `Observation only`,
+`Live semantic acceptance pending`, and evidence-unavailable states because
+this was a non-trading-day deployment. These deployment and rendering checks
+do not establish Monday live collection correctness.
