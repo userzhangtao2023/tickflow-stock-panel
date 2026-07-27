@@ -318,3 +318,16 @@ Executable evidence:
 - specification checker: passed.
 
 Production route and authenticated request evidence remain pending deployment.
+
+Production evidence was completed on 2026-07-27. Image
+`tickflow-stock-panel-app:collection-monitor-market-query-e4cb0736-20260727`
+was deployed on `192.168.10.28`; `/health` returned version `0.1.86` and the
+container remained running with restart count zero during its guarded check.
+A later Dow-monitor release superseded it with
+`tickflow-stock-panel-app:dow-monitor-1bf865793445` and retained the fixed
+Collection Monitor chunk. In the authenticated browser after a real component
+remount,
+`/collection-monitor?market=us` selected US and both task and gap reads used
+`market=us`. The HK view continued to select HK. This closes the URL
+market-scope acceptance without changing collection ownership or signal
+semantics.

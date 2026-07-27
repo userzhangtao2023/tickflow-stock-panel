@@ -314,3 +314,15 @@ tests also remained green, and the production build succeeded.
 Verdict: PASS for implementation and deployment readiness. Production
 acceptance still requires the deployed US URL to show US as selected and to
 issue `market=us` task/gap requests.
+
+## 2026-07-27 production closure: URL market scope
+
+The active superseding image
+`tickflow-stock-panel-app:dow-monitor-1bf865793445` was read back through the
+authenticated production page. After the Collection Monitor component was
+actually remounted, the `market=us` URL displayed US as the selected filter
+and issued task and gap reads with `market=us`; the HK URL remained HK-scoped.
+Container health reported version `0.1.86` with no restart during the closing
+verification.
+
+Verdict: PASS for production URL market-scope acceptance.
