@@ -302,3 +302,19 @@ The page truthfully showed `Observation only`,
 `Live semantic acceptance pending`, and evidence-unavailable states because
 this was a non-trading-day deployment. These deployment and rendering checks
 do not establish Monday live collection correctness.
+
+## 2026-07-27 URL market-scope repair
+
+Opening `/collection-monitor?market=us` previously left the task and gap
+filters on HK. A focused test reproduced the defect with the select value and
+both GET request URLs. The page now validates `cn`, `hk`, and `us` from the URL
+and uses the result only as its initial read scope; unsupported values still
+fall back to HK.
+
+Executable evidence:
+
+- focused component suite: 9 passed;
+- production frontend build: passed, 2,709 modules transformed;
+- specification checker: passed.
+
+Production route and authenticated request evidence remain pending deployment.

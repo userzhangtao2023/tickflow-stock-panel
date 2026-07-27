@@ -301,3 +301,16 @@ all static files.
 This PASS applies to route availability and deployment readiness only. Live
 minute-bar, capital-flow, order-book, and order-size semantic acceptance
 remains pending for the trading session.
+
+## 2026-07-27 requirements-to-evidence review: URL market scope
+
+`REQ-COLLECTION-MONITOR-PAGE-001` requires the market filter to control the
+reader's task and gap evidence scope. The review confirmed that the new test
+fails against the former hard-coded HK initialization and passes only when the
+validated URL market becomes the initial filter. The implementation remains
+GET-only, same-origin, bounded, and observation-only. The existing eight page
+tests also remained green, and the production build succeeded.
+
+Verdict: PASS for implementation and deployment readiness. Production
+acceptance still requires the deployed US URL to show US as selected and to
+issue `market=us` task/gap requests.

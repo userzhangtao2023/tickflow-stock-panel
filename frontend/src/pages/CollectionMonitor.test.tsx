@@ -229,7 +229,26 @@ describe('CollectionMonitor', () => {
   })
 
   afterEach(() => {
+    window.history.replaceState({}, '', '/')
     vi.unstubAllGlobals()
+  })
+
+  it('uses the market query parameter as the initial task and gap scope', async () => {
+    window.history.replaceState({}, '', '/collection-monitor?market=us')
+    const fetchMock = installHealthyFetch()
+
+    renderPage()
+
+    expect(screen.getByLabelText('市场')).toHaveValue('us')
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input))
+      expect(urls).toContain(
+        '/api/collection-monitor/tasks?date=2026-07-26&market=us&dataset=capital_distribution&limit=100&offset=0',
+      )
+      expect(urls).toContain(
+        '/api/collection-monitor/gaps?market=us&dataset=capital_distribution&date=2026-07-26&limit=100&offset=0',
+      )
+    })
   })
 
   it('renders the four read-only evidence levels with distinct evidence semantics', async () => {

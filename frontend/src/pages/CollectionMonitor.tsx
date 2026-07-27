@@ -63,6 +63,11 @@ const healthClasses: Record<HealthState, string> = {
 
 const PAGE_LIMIT = 100
 
+function initialMarketFromLocation(): MarketKey {
+  const market = new URLSearchParams(window.location.search).get('market')
+  return market === 'cn' || market === 'hk' || market === 'us' ? market : 'hk'
+}
+
 function todayInShanghai() {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai',
@@ -241,7 +246,7 @@ function PaginationControls({
 export function CollectionMonitor({ initialDate }: { initialDate?: string }) {
   const [filters, setFilters] = useState<CollectionMonitorFilters>({
     date: initialDate ?? todayInShanghai(),
-    market: 'hk',
+    market: initialMarketFromLocation(),
     dataset: 'capital_distribution',
   })
   const [taskOffset, setTaskOffset] = useState(0)
