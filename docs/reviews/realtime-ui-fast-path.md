@@ -63,3 +63,28 @@ The previously recorded freshness-threshold discrepancy between the indexed
 5/90-second wording and the current 120/180-second implementation remains
 outside this alias repair. It is not used as evidence for this change and
 continues to prevent unconditional acceptance of the complete requirement.
+
+## 2026-07-27 subscribed-symbol backlog review
+
+The production failure was reproduced below the UI: Redis latest-state keys
+were current, but a new WebSocket subscription first received current
+snapshots and then much older Pub/Sub sequences. The frontend correctly
+rejected those obsolete sequences, which made the cards appear frozen. This
+rules out the collector, Longbridge API, and card rendering as the root cause.
+
+The gateway now filters Pub/Sub messages against its live subscription index
+before sanitization and fan-out, coalesces multiple queued states per symbol,
+and continues draining after each fairness yield instead of stopping at the
+old fixed boundary. The executable test places the desired symbol beyond that
+boundary, so removing either the continued drain or subscription filter makes
+the test fail.
+
+Lower-layer production evidence is the 22-second protocol observation with
+four snapshots and 187 advancing updates for all four requested symbols.
+Higher-layer browser evidence independently shows three price changes and the
+fourth card's depth/time update over 12 seconds without reload. The immutable
+release manifest hashes the overlaid gateway service, and the production image
+label resolves to release `019094cf806600962035069a54a800c41eebf614`.
+This evidence satisfies the new backlog clause of
+`REQ-REALTIME-UI-GATEWAY-001`; it does not waive the separate documented
+freshness-threshold discrepancy.

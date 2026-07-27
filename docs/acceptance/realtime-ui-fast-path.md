@@ -83,3 +83,24 @@ treated as a substitute for that lower-layer semantic acceptance.
   warnings or errors. Card-level browser acceptance remains pending because
   the pre-existing browser session was invalidated by the production restart
   and the protected monitor APIs returned HTTP 401.
+
+## 2026-07-27 subscribed-symbol backlog recovery
+
+- Backend source commit: `ea44700`.
+- Production release commit: `019094cf806600962035069a54a800c41eebf614`.
+- Production image: `tickflow-stock-panel-app:dow-monitor-019094cf8066`.
+- The failing regression contained more than one drain interval of
+  unsubscribed messages followed by two subscribed-symbol updates. The old
+  implementation did not reach the subscribed symbol in one cycle. The fixed
+  gateway drains the unrelated backlog, coalesces obsolete states per
+  subscribed symbol, and delivers only sequence 8. The backend realtime suite
+  passes 12 tests.
+- A production-origin 22-second WebSocket observation received four current
+  snapshots and 187 subsequent updates across `1347.HK`, `981.HK`, `2714.HK`,
+  and `3759.HK`. Sequences advanced from 238439 to 241153 and quote timestamps
+  advanced during the observation; no fallback was received.
+- In an authenticated browser session, no manual reload was performed between
+  two card readings 12 seconds apart. `01347.HK` changed from 141.60 to 141.40,
+  `0981.HK` from 69.95 to 69.90, and `2714.HK` from 32.74 to 32.76. All four
+  cards remained marked `实时`, and `3759.HK` depth and quote time also
+  advanced.
