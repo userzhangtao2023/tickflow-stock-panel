@@ -331,3 +331,43 @@ remount,
 `market=us`. The HK view continued to select HK. This closes the URL
 market-scope acceptance without changing collection ownership or signal
 semantics.
+
+## 2026-08-03 migrated dataset compatibility repair
+
+The 10.23 collection cutover expanded the 10.28 market-evidence response from
+six to ten bounded dataset keys. The production TickFlow proxy still enforced
+the former six-key response contract, so CN and HK market requests returned the
+sanitized HTTP 502 response even though overview, tasks, gaps, and the 19912
+upstream were healthy.
+
+The authoritative response-only allowlist now also accepts `intraday_line`,
+`order_book_depth`, `realtime_quote`, and `trade_tick`. These values remain
+invalid as task/gap query filters. Unknown keys, duplicate keys, oversized
+responses, and malformed items still fail closed.
+
+Evidence:
+
+- TDD reproduction: the ten-key market response returned 502 before the
+  production edit and 200 afterward.
+- Focused proxy/specification suite: 50 passed, 1 skipped for the existing
+  optional full-application dependency.
+- Specification compliance checker: passed after removing two expired,
+  already-superseded pre-acceptance exceptions.
+- Source revision: `605be2edf3c3d86bc30c52a7b82ff37e4c5caad1`.
+- Deployed additive image:
+  `tickflow-stock-panel-app:collection-monitor-datasets-605be2e-evalpaused`,
+  based on the then-current `dow-evaluation-paused-20260803` image so the
+  concurrent Dow evaluation change was preserved.
+- Image ID:
+  `sha256:bb3ce24c1ad302ac8b487af6d89f65cac63d633f157b0b4790d9964bc61d217d`.
+- Guarded backup:
+  `/home/alwin/backups/tickflow-collection-monitor-datasets-20260803T131830+0800`.
+- Authenticated production responses for overview, CN/HK/US market evidence,
+  HK tasks, and HK gaps all returned HTTP 200. HK returned exactly 10 known
+  dataset keys and 18 task records were visible.
+- Browser verification at `/collection-monitor?market=hk` found no global
+  `采集证据当前不可用` banner; all six same-origin evidence requests returned
+  HTTP 200.
+
+This compatibility acceptance does not assert the semantic correctness of
+every dataset observation and does not authorize collection mutations.

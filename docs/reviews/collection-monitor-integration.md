@@ -326,3 +326,29 @@ Container health reported version `0.1.86` with no restart during the closing
 verification.
 
 Verdict: PASS for production URL market-scope acceptance.
+
+## 2026-08-03 independent requirements-to-evidence review
+
+Review target: `REQ-COLLECTION-MONITOR-PROXY-001`, source revision
+`605be2edf3c3d86bc30c52a7b82ff37e4c5caad1`.
+
+- The authoritative upstream returned two CN, ten HK, and one US dataset
+  records. The former six-key limit caused the observed sanitized 502 for CN
+  and HK; no missing 10.23 collection evidence was inferred from that proxy
+  failure.
+- The source change adds only four known response keys. It does not enlarge
+  the query allowlist or permit arbitrary upstream keys.
+- The focused suite proves ten known unique response records pass while an
+  eleventh unknown record, a duplicate, an unknown value, or a non-mapping
+  still fails with the sanitized 502. All five response-only keys remain 422
+  when used as task filters.
+- The deployed image is a one-file additive layer over the latest concurrent
+  Dow-evaluation image, so the collection repair did not replace the newer Dow
+  behavior with the older collection-monitor source tree.
+- Authenticated production and browser evidence independently confirmed all
+  six same-origin reads returned HTTP 200 after deployment. The page-level
+  result was evaluated only after the 19912 store and route evidence passed.
+
+Verdict: PASS for the migrated dataset compatibility repair. Live semantic
+acceptance for the meaning and completeness of each collection remains a
+separate lower-layer gate.
