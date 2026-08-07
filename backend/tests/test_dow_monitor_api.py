@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import httpx
 import polars as pl
@@ -16,11 +17,108 @@ from starlette.responses import JSONResponse
 from app.api import dow_monitor
 from app.services.dow_monitor_bars import TimeframeBars
 from app.services.dow_monitor_client import DowEngineResult, LongbridgeDowClient
-from app.services.dow_monitor_models import DowNotification, DowTimeframeState
+from app.services.dow_monitor_data import SymbolFreshness, WebStockBatch
+from app.services.dow_monitor_models import (
+    DowMinuteDecision,
+    DowNotification,
+    DowTimeframeState,
+)
 from app.services.dow_monitor_service import DowMonitorService
 from app.services.dow_monitor_store import DowMonitorStore
 
 NOW = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
+
+
+def _minute_decision(
+    *,
+    minute: int = 26,
+    confidence: int = 72,
+) -> DowMinuteDecision:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    return DowMinuteDecision(
+        symbol="01347.HK",
+        market="hk",
+        decision_minute=datetime(2026, 7, 27, 10, minute, tzinfo=zone),
+        direction="BULLISH",
+        direction_label="偏涨",
+        action="WATCH_BUY",
+        action_label="买入观察",
+        confidence=confidence,
+        dominant_timeframe="15m",
+        confirmation_timeframes=("30m",),
+        supporting_reasons=("15/30分钟结构同向偏强",),
+        contrary_risks=("60分钟仍处于震荡",),
+        invalidation_conditions=("跌破136.80且大单转为净流出",),
+        data_status="COMPLETE",
+        status_label="数据完整",
+        source_timestamp=datetime(2026, 7, 27, 10, minute - 1, tzinfo=zone),
+    )
+
+
+def _save_bullish_decision_states(
+    store: DowMonitorStore,
+    *,
+    source_timestamp: datetime,
+) -> None:
+    operations = {
+        "5m": "买入触发",
+        "15m": "持有",
+        "30m": "持有",
+        "60m": "观察",
+        "day": "持有",
+    }
+    trends = {
+        "5m": "UP",
+        "15m": "UP",
+        "30m": "UP",
+        "60m": "RANGE",
+        "day": "UP",
+    }
+    for timeframe in ("5m", "15m", "30m", "60m", "day"):
+        store.save_state(
+            DowTimeframeState(
+                symbol="01347.HK",
+                market="hk",
+                timeframe=timeframe,
+                freshness_state="LIVE",
+                source_timestamp=source_timestamp,
+                snapshot={},
+                chart={
+                    "bars": [
+                        {
+                            "timestamp": source_timestamp.isoformat(),
+                            "open": 137.00,
+                            "high": 139.20,
+                            "low": 136.80,
+                            "close": 138.70,
+                            "volume": 320_000,
+                        }
+                    ],
+                    "longTerm": {
+                        "trendDirection": trends[timeframe],
+                        "operation": operations[timeframe],
+                    },
+                },
+                updated_at=source_timestamp,
+            )
+        )
+
+
+def _minute_rows(*minutes: int) -> pl.DataFrame:
+    return pl.DataFrame(
+        [
+            {
+                "symbol": "01347.HK",
+                "datetime": datetime(2026, 7, 27, 10, minute),
+                "open": 137.00 + index,
+                "high": 139.20 + index,
+                "low": 136.80 + index,
+                "close": 138.70 + index,
+                "volume": 320_000 + index * 10_000,
+            }
+            for index, minute in enumerate(minutes)
+        ]
+    )
 
 
 class _UnusedGateway:
@@ -387,10 +485,10 @@ def test_overview_api_exposes_trading_day_intraday_capital(tmp_path, monkeypatch
     service.store.upsert_symbol("01347.HK", "hk", True)
 
     def fake_fetch(symbols, *, now, max_quote_age_minutes):
-        assert symbols == ["01347.HK"]
+        assert symbols == ["1347.HK"]
         assert max_quote_age_minutes >= 60
         return {
-            "01347.HK": {
+            "1347.HK": {
                 "capital_minute": "2026-07-23 15:30:00",
                 "total_net": 186.5,
                 "large_net": 92.25,
@@ -413,7 +511,7 @@ def test_overview_api_exposes_trading_day_intraday_capital(tmp_path, monkeypatch
         service,
         "_intraday_capital_windows_by_symbol",
         lambda symbols: {
-            "01347.HK": [
+            "1347.HK": [
                 {
                     "label": "近30分钟",
                     "minutes": 30,
@@ -449,6 +547,7 @@ def test_overview_api_exposes_trading_day_intraday_capital(tmp_path, monkeypatch
         "last_flow_time": "2026-07-23 15:29:00",
         "flow_points": 88,
         "source": "trading_day",
+        "quality": "DELAYED",
         "windows": [
             {
                 "label": "近30分钟",
@@ -467,6 +566,66 @@ def test_overview_api_exposes_trading_day_intraday_capital(tmp_path, monkeypatch
             }
         ],
     }
+
+
+def test_overview_matches_leading_zero_display_alias_to_canonical_capital(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    service = _service(tmp_path)
+    service.store.upsert_symbol("01347.HK", "hk", True)
+
+    monkeypatch.setattr(
+        service,
+        "_intraday_capital_by_symbol",
+        lambda symbols: {
+            "1347.HK": {
+                "capital_minute": "2026-07-23 15:30:00",
+                "total_net": 0,
+                "large_net": 0,
+                "flow_15m": 0,
+                "flow_30m": 0,
+                "flow_points": 17,
+                "source": "trading_day",
+            }
+        },
+    )
+
+    response = _client(service).get("/api/dow-monitor/overview?market=hk")
+
+    assert response.status_code == 200
+    item = response.json()["symbols"][0]
+    assert item["symbol"] == "01347.HK"
+    assert item["intraday_capital"]["total_net"] == 0
+    assert item["intraday_capital"]["large_net"] == 0
+
+
+def test_overview_matches_leading_zero_display_alias_to_canonical_quote(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    service = _service(tmp_path)
+    service.store.upsert_symbol("01347.HK", "hk", True)
+    service._retain_latest_quotes(
+        [
+            {
+                "symbol": "1347.HK",
+                "name": "HUA HONG SEMI",
+                "last_price": 148.6,
+                "change_pct": -0.8,
+                "timestamp": int(NOW.timestamp() * 1_000),
+            }
+        ]
+    )
+    monkeypatch.setattr(service, "_intraday_capital_by_symbol", lambda symbols: {})
+
+    response = _client(service).get("/api/dow-monitor/overview?market=hk")
+
+    assert response.status_code == 200
+    item = response.json()["symbols"][0]
+    assert item["symbol"] == "01347.HK"
+    assert item["name"] == "HUA HONG SEMI"
+    assert item["last_price"] == 148.6
 
 
 def test_overview_api_exposes_next_day_realtime_context(tmp_path) -> None:
@@ -1001,3 +1160,345 @@ def test_real_lifespan_loads_provider_before_monitor_and_stops_before_shared_clo
 
     assert events.index("monitor-stop") < events.index("monitor-client-close")
     assert events.index("monitor-client-close") < events.index("shared-close")
+
+
+def test_minute_decision_is_immutable_for_same_symbol_and_minute(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    first = _minute_decision(confidence=72)
+    changed = first.model_copy(update={"confidence": 91})
+
+    assert store.save_minute_decision(first) == first
+    assert store.save_minute_decision(changed) == first
+    assert DowMonitorStore(tmp_path).get_minute_decision("01347.HK") == first
+
+
+def test_minute_decision_advances_once_for_a_newer_minute(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    current = _minute_decision(minute=26, confidence=72)
+    newer = _minute_decision(minute=27, confidence=81)
+
+    store.save_minute_decision(current)
+
+    assert store.save_minute_decision(newer) == newer
+    assert store.save_minute_decision(current) == newer
+    assert store.get_minute_decision("01347.HK") == newer
+
+
+def test_remove_symbol_also_removes_its_minute_decision(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+    store.save_minute_decision(_minute_decision())
+
+    assert store.remove_symbol("01347.HK") is True
+    assert store.get_minute_decision("01347.HK") is None
+
+
+def test_corrupt_minute_decision_file_is_ignored(tmp_path) -> None:
+    decision_path = tmp_path / "user_data" / "dow_monitor_minute_decisions.json"
+    decision_path.parent.mkdir(parents=True)
+    decision_path.write_text("{not-json", encoding="utf-8")
+
+    assert DowMonitorStore(tmp_path).get_minute_decision("01347.HK") is None
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"decision_minute": datetime(2026, 7, 27, 10, 26)}, "timezone-aware"),
+        ({"confidence": 101}, "less than or equal to 100"),
+        ({"confidence": -1}, "greater than or equal to 0"),
+    ],
+)
+def test_minute_decision_rejects_invalid_time_and_confidence(update, message) -> None:
+    payload = _minute_decision().model_dump()
+    payload.update(update)
+
+    with pytest.raises(ValidationError, match=message):
+        DowMinuteDecision.model_validate(payload)
+
+
+def test_service_creates_only_one_decision_for_each_complete_minute(tmp_path) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    now = datetime(2026, 7, 27, 10, 26, 10, tzinfo=zone)
+    service = _service(tmp_path)
+    item = service.store.upsert_symbol("01347.HK", "hk", True)
+    _save_bullish_decision_states(
+        service.store,
+        source_timestamp=datetime(2026, 7, 27, 10, 25, tzinfo=zone),
+    )
+    positive_capital = {
+        "total_net": 8_000_000,
+        "large_net": 2_000_000,
+        "flow_15m": 600_000,
+        "flow_30m": 1_200_000,
+    }
+
+    service._refresh_minute_decision(
+        item,
+        _minute_rows(25),
+        positive_capital,
+        now,
+    )
+    first = service.store.get_minute_decision("01347.HK")
+    service._refresh_minute_decision(
+        item,
+        _minute_rows(25),
+        {
+            "total_net": -8_000_000,
+            "large_net": -2_000_000,
+            "flow_15m": -600_000,
+            "flow_30m": -1_200_000,
+        },
+        now + timedelta(seconds=15),
+    )
+
+    assert first is not None
+    assert first.decision_minute == datetime(2026, 7, 27, 10, 26, tzinfo=zone)
+    assert first.direction_label == "偏涨"
+    assert service.store.get_minute_decision("01347.HK") == first
+
+
+def test_service_advances_decision_when_next_complete_minute_arrives(tmp_path) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    service = _service(tmp_path)
+    item = service.store.upsert_symbol("01347.HK", "hk", True)
+    _save_bullish_decision_states(
+        service.store,
+        source_timestamp=datetime(2026, 7, 27, 10, 26, tzinfo=zone),
+    )
+    capital = {
+        "total_net": 8_000_000,
+        "large_net": 2_000_000,
+        "flow_15m": 600_000,
+        "flow_30m": 1_200_000,
+    }
+    service._refresh_minute_decision(
+        item,
+        _minute_rows(25),
+        capital,
+        datetime(2026, 7, 27, 10, 26, 10, tzinfo=zone),
+    )
+
+    service._refresh_minute_decision(
+        item,
+        _minute_rows(25, 26),
+        capital,
+        datetime(2026, 7, 27, 10, 27, 10, tzinfo=zone),
+    )
+
+    advanced = service.store.get_minute_decision("01347.HK")
+    assert advanced is not None
+    assert advanced.decision_minute == datetime(2026, 7, 27, 10, 27, tzinfo=zone)
+    assert advanced.source_timestamp == datetime(2026, 7, 27, 10, 26, tzinfo=zone)
+
+
+def test_presented_minute_decision_waits_then_degrades_after_90_seconds(tmp_path) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    service = _service(tmp_path)
+    item = service.store.upsert_symbol("01347.HK", "hk", True)
+    decision = _minute_decision()
+
+    waiting = service._present_minute_decision(
+        item,
+        decision,
+        datetime(2026, 7, 27, 10, 27, 10, tzinfo=zone),
+    )
+    delayed = service._present_minute_decision(
+        item,
+        decision,
+        datetime(2026, 7, 27, 10, 27, 31, tzinfo=zone),
+    )
+
+    assert waiting is not None
+    assert waiting["data_status"] == "WAITING_NEW_MINUTE"
+    assert waiting["action_label"] == "买入观察"
+    assert delayed is not None
+    assert delayed["data_status"] == "DELAYED"
+    assert delayed["status_label"] == "数据延迟"
+    assert delayed["action"] == "OBSERVE"
+    assert delayed["action_label"] == "继续观察"
+
+
+def test_presented_minute_decision_is_preserved_as_observe_when_market_closed(
+    tmp_path,
+) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    service = _service(tmp_path)
+    item = service.store.upsert_symbol("01347.HK", "hk", True)
+
+    presented = service._present_minute_decision(
+        item,
+        _minute_decision(),
+        datetime(2026, 7, 27, 17, 0, tzinfo=zone),
+    )
+
+    assert presented is not None
+    assert presented["direction_label"] == "偏涨"
+    assert presented["confidence"] == 72
+    assert presented["data_status"] == "MARKET_CLOSED"
+    assert presented["status_label"] == "已收盘"
+    assert presented["action_label"] == "继续观察"
+
+
+def test_overview_api_exposes_persisted_minute_decision(tmp_path) -> None:
+    service = _service(tmp_path)
+    service.store.upsert_symbol("01347.HK", "hk", True)
+    service.store.save_minute_decision(_minute_decision())
+
+    response = _client(service).get("/api/dow-monitor/overview?market=hk")
+
+    assert response.status_code == 200
+    decision = response.json()["symbols"][0]["minute_decision"]
+    assert decision["direction_label"] == "偏涨"
+    assert decision["action_label"] == "继续观察"
+    assert decision["data_status"] == "MARKET_CLOSED"
+
+
+def test_run_once_persists_minute_decision_after_successful_symbol_cycle(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    now = datetime(2026, 7, 27, 10, 26, 10, tzinfo=zone)
+    rows = _minute_rows(25)
+
+    class Gateway:
+        def fetch_since(self, _starts, _end):
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=rows,
+                source_timestamp=datetime(2026, 7, 27, 2, 25, tzinfo=UTC),
+                freshness_by_symbol={
+                    "01347.HK": SymbolFreshness(state="LIVE", reason=None)
+                },
+                gap_details={"01347.HK": []},
+            )
+
+    store = DowMonitorStore(tmp_path)
+    item = store.upsert_symbol("01347.HK", "hk", True)
+    _save_bullish_decision_states(
+        store,
+        source_timestamp=datetime(2026, 7, 27, 10, 25, tzinfo=zone),
+    )
+    service = DowMonitorService(
+        store,
+        Gateway(),
+        _UnusedDowClient(),
+        _daily_loader,
+        now_fn=lambda: now,
+    )
+    monkeypatch.setattr(
+        service,
+        "_evaluate_symbol",
+        lambda *_args, **_kwargs: (None, True),
+    )
+    monkeypatch.setattr(
+        service,
+        "_intraday_capital_by_symbol",
+        lambda _symbols: {
+            item.symbol: {
+                "total_net": 8_000_000,
+                "large_net": 2_000_000,
+                "flow_15m": 600_000,
+                "flow_30m": 1_200_000,
+            }
+        },
+    )
+
+    asyncio.run(service.run_once())
+
+    decision = store.get_minute_decision(item.symbol)
+    assert decision is not None
+    assert decision.decision_minute == datetime(2026, 7, 27, 10, 26, tzinfo=zone)
+    assert decision.action_label == "买入观察"
+
+
+def test_store_preserves_the_production_symbol_feed_contract(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    store.upsert_symbol("01347.HK", "hk", True)
+
+    authoritative, symbols = store.load_symbol_feed()
+
+    assert authoritative is True
+    assert [item.symbol for item in symbols] == ["01347.HK"]
+
+
+def test_store_preserves_the_production_state_listing_contract(tmp_path) -> None:
+    store = DowMonitorStore(tmp_path)
+    state = DowTimeframeState(
+        symbol="01347.HK",
+        market="hk",
+        timeframe="15m",
+        freshness_state="LIVE",
+        source_timestamp=NOW,
+        snapshot={},
+        chart={},
+        updated_at=NOW,
+    )
+    store.save_state(state)
+
+    assert store.list_states() == [state]
+
+
+def test_run_once_persists_each_symbol_decision_before_evaluating_the_next(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    zone = ZoneInfo("Asia/Hong_Kong")
+    now = datetime(2026, 7, 27, 10, 26, 10, tzinfo=zone)
+    rows = _minute_rows(25)
+
+    class Gateway:
+        def fetch_since(self, _starts, _end):
+            return WebStockBatch(
+                quotes=[],
+                minute_rows=rows,
+                source_timestamp=datetime(2026, 7, 27, 2, 25, tzinfo=UTC),
+                freshness_by_symbol={
+                    first.symbol: SymbolFreshness(state="LIVE", reason=None),
+                    second.symbol: SymbolFreshness(state="LIVE", reason=None),
+                },
+                gap_details={first.symbol: [], second.symbol: []},
+            )
+
+    store = DowMonitorStore(tmp_path)
+    first = store.upsert_symbol("01347.HK", "hk", True)
+    second = store.upsert_symbol("00981.HK", "hk", True)
+    _save_bullish_decision_states(store, source_timestamp=now)
+    for timeframe in ("5m", "15m", "30m", "60m", "day"):
+        first_state = store.get_state(first.symbol, timeframe)
+        assert first_state is not None
+        store.save_state(first_state.model_copy(update={"symbol": second.symbol}))
+    service = DowMonitorService(
+        store,
+        Gateway(),
+        _UnusedDowClient(),
+        _daily_loader,
+        now_fn=lambda: now,
+    )
+    observed_before_second: list[bool] = []
+
+    def evaluate(item, *_args, **_kwargs):
+        if item.symbol == second.symbol:
+            observed_before_second.append(
+                store.get_minute_decision(first.symbol) is not None
+            )
+        return None, True
+
+    monkeypatch.setattr(service, "_evaluate_symbol", evaluate)
+    monkeypatch.setattr(
+        service,
+        "_intraday_capital_by_symbol",
+        lambda _symbols: {
+            first.symbol: {
+                "total_net": 8_000_000,
+                "large_net": 2_000_000,
+                "flow_15m": 600_000,
+                "flow_30m": 1_200_000,
+            }
+        },
+    )
+
+    asyncio.run(service.run_once())
+
+    assert observed_before_second == [True]

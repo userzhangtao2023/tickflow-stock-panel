@@ -7,7 +7,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 
-from app.services.dow_monitor_models import DowNotification, DowTimeframeState, MonitoredSymbol
+from app.services.dow_monitor_models import (
+    DowMinuteDecision,
+    DowNotification,
+    DowTimeframeState,
+    MonitoredSymbol,
+)
 
 
 def _monitor_symbol_identity(symbol: str) -> str:
@@ -28,6 +33,7 @@ class DowMonitorStore:
         self._directory = Path(data_dir) / "user_data"
         self._symbols_path = self._directory / "dow_monitor_symbols.json"
         self._states_path = self._directory / "dow_monitor_states.json"
+        self._decisions_path = self._directory / "dow_monitor_minute_decisions.json"
         self._notifications_path = self._directory / "dow_monitor_notifications.jsonl"
         self._activations_path = self._directory / "dow_monitor_activations.json"
         self._notifications, self._read_at = self._load_notifications()
@@ -36,6 +42,25 @@ class DowMonitorStore:
     def list_symbols(self) -> list[MonitoredSymbol]:
         with self._lock:
             return self._load_models(self._symbols_path, MonitoredSymbol)
+
+    def load_symbol_feed(self) -> tuple[bool, list[MonitoredSymbol]]:
+        with self._lock:
+            symbols = self._load_models(self._symbols_path, MonitoredSymbol)
+            if not self._symbols_path.is_file():
+                return False, symbols
+            try:
+                payload = json.loads(self._symbols_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False, symbols
+            if not isinstance(payload, list):
+                return False, symbols
+            try:
+                strict_symbols = [
+                    MonitoredSymbol.model_validate(item) for item in payload
+                ]
+            except (TypeError, ValueError):
+                return False, symbols
+            return True, strict_symbols
 
     def upsert_symbol(
         self,
@@ -75,6 +100,15 @@ class DowMonitorStore:
 
             states = self._load_models(self._states_path, DowTimeframeState)
             self._write_json(self._states_path, [item for item in states if item.symbol != symbol])
+            decisions = self._load_models(self._decisions_path, DowMinuteDecision)
+            self._write_json(
+                self._decisions_path,
+                [
+                    item
+                    for item in decisions
+                    if _monitor_symbol_identity(item.symbol) != _monitor_symbol_identity(symbol)
+                ],
+            )
             return True
 
     def save_state(self, state: DowTimeframeState) -> DowTimeframeState:
@@ -94,6 +128,34 @@ class DowMonitorStore:
             for state in self._load_models(self._states_path, DowTimeframeState):
                 if state.symbol == symbol and state.timeframe == timeframe:
                     return state
+            return None
+
+    def list_states(self) -> list[DowTimeframeState]:
+        with self._lock:
+            return self._load_models(self._states_path, DowTimeframeState)
+
+    def save_minute_decision(self, snapshot: DowMinuteDecision) -> DowMinuteDecision:
+        with self._lock:
+            decisions = self._load_models(self._decisions_path, DowMinuteDecision)
+            identity = _monitor_symbol_identity(snapshot.symbol)
+            for index, existing in enumerate(decisions):
+                if _monitor_symbol_identity(existing.symbol) != identity:
+                    continue
+                if existing.decision_minute >= snapshot.decision_minute:
+                    return existing
+                decisions[index] = snapshot
+                break
+            else:
+                decisions.append(snapshot)
+            self._write_json(self._decisions_path, decisions)
+            return snapshot
+
+    def get_minute_decision(self, symbol: str) -> DowMinuteDecision | None:
+        with self._lock:
+            identity = _monitor_symbol_identity(symbol)
+            for decision in self._load_models(self._decisions_path, DowMinuteDecision):
+                if _monitor_symbol_identity(decision.symbol) == identity:
+                    return decision
             return None
 
     def append_notification(self, notification: DowNotification) -> bool:
@@ -165,7 +227,15 @@ class DowMonitorStore:
                 self._read_at[notification_id] = read_at
             return True
 
-    def _load_models(self, path: Path, model_type: type[MonitoredSymbol] | type[DowTimeframeState]):
+    def _load_models(
+        self,
+        path: Path,
+        model_type: (
+            type[MonitoredSymbol]
+            | type[DowTimeframeState]
+            | type[DowMinuteDecision]
+        ),
+    ):
         if not path.is_file():
             return []
         try:
@@ -227,7 +297,13 @@ class DowMonitorStore:
         self._event_keys = {notification.event_key for notification in self._notifications}
 
     def _write_json(
-        self, path: Path, models: list[MonitoredSymbol] | list[DowTimeframeState]
+        self,
+        path: Path,
+        models: (
+            list[MonitoredSymbol]
+            | list[DowTimeframeState]
+            | list[DowMinuteDecision]
+        ),
     ) -> None:
         self._directory.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile(

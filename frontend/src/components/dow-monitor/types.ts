@@ -335,6 +335,103 @@ export interface DowMonitorNotification {
   trigger_price: number
   snapshot_payload: DowMonitorNotificationSnapshot
   read_at: string | null
+  category?: 'BUY_POINT' | 'SELL_POINT' | 'EARLY_RISK'
+  available_at?: string
+  evidence_text?: string
+  prompt_text?: string
+}
+
+export interface DowDecisionDriver {
+  driver_code: string
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  contribution: number
+  current_value: number | null
+  previous_value: number | null
+  change_value: number | null
+  unit: string | null
+  horizons: string[]
+  confirmation: 'CONFIRMED' | 'UNCONFIRMED' | 'CONFLICT' | 'NOT_APPLICABLE'
+  text: string
+}
+
+export interface DowMinuteRiskWarning {
+  family:
+    | 'OPENING_SURGE_REVERSAL'
+    | 'BUYING_INEFFECTIVE'
+    | 'REBOUND_FAILURE'
+    | 'KEY_LEVEL_BREAKDOWN'
+  stage: 'WATCH' | 'WARNING' | 'CONFIRMED'
+  title: string
+  message: string
+}
+
+export interface DowDailyDecisionPhase {
+  code:
+    | 'RAPID_RISE_CONFIRMED'
+    | 'PRICE_CAPITAL_DIVERGENCE'
+    | 'SURGE_REVERSAL_RISK'
+    | 'DOWNSIDE_CONFIRMED'
+  label: string
+  first_observed_at: string
+}
+
+export interface DowDailyDecisionEvidence {
+  code: string
+  text: string
+  observed_at: string
+}
+
+export interface DowDailyDecisionSummary {
+  as_of_minute: string
+  direction: 'BULLISH' | 'BEARISH' | 'RANGE'
+  direction_label: '偏涨' | '偏跌' | '震荡'
+  action: 'WATCH_BUY' | 'HOLD' | 'REDUCE_SELL' | 'OBSERVE'
+  action_label: '买入观察' | '持有' | '减仓/卖出' | '继续观察'
+  confidence: number
+  phase_path: DowDailyDecisionPhase[]
+  summary_text: string
+  key_evidence: DowDailyDecisionEvidence[]
+  reversal_condition: string
+  data_status: string
+  status_label: string
+  current_price?: number | null
+  vwap_price?: number | null
+  vwap_distance_pct?: number | null
+  input_event_ids: string[]
+}
+
+export interface DowMinuteDecision {
+  symbol: string
+  market: DowMonitorSymbolMarket
+  decision_minute: string
+  direction: 'BULLISH' | 'BEARISH' | 'RANGE'
+  direction_label: '偏涨' | '偏跌' | '震荡'
+  action: 'WATCH_BUY' | 'HOLD' | 'REDUCE_SELL' | 'OBSERVE'
+  action_label: '买入观察' | '持有' | '减仓/卖出' | '继续观察'
+  confidence: number
+  dominant_timeframe: DowTimeframe | null
+  confirmation_timeframes: DowTimeframe[]
+  supporting_reasons: string[]
+  contrary_risks: string[]
+  invalidation_conditions: string[]
+  data_status:
+    | 'COMPLETE'
+      | 'WAITING_NEW_MINUTE'
+      | 'DELAYED'
+      | 'CAPITAL_UNCONFIRMED'
+      | 'CAPITAL_UNAVAILABLE'
+      | 'CAPITAL_DELAYED'
+      | 'CAPITAL_INSUFFICIENT'
+      | 'MARKET_CLOSED'
+      | 'INSUFFICIENT_STRUCTURE'
+  status_label: string
+  source_timestamp: string | null
+  summary_text?: string | null
+  key_drivers?: DowDecisionDriver[]
+  turn_stronger_condition?: string | null
+  turn_weaker_condition?: string | null
+  risk_warning?: DowMinuteRiskWarning | null
+  daily_summary?: DowDailyDecisionSummary | null
 }
 
 export interface DowMonitorOverviewSymbol extends DowMonitorSymbol {
@@ -342,8 +439,19 @@ export interface DowMonitorOverviewSymbol extends DowMonitorSymbol {
   last_price: number | null
   change_pct: number | null
   quote_timestamp: number | string | null
+  completed_minute_timestamp?: string | null
+  analysis_timestamp?: string | null
+  analysis_status?:
+    | 'READY'
+    | 'WAITING'
+    | 'HISTORY_PENDING'
+    | 'QUOTE_DELAYED'
+    | 'ANALYSIS_TIMEOUT'
+    | 'ANALYSIS_PAUSED'
+  analysis_status_label?: string
   next_day_direction?: DowMonitorNextDayDirection | null
   intraday_capital?: DowMonitorIntradayCapital | null
+  minute_decision?: DowMinuteDecision | null
   states: Partial<Record<DowTimeframe, DowMonitorTimeframeState>>
   latest_notification: DowMonitorNotification | null
   last_success_at: string | null
@@ -361,8 +469,9 @@ export interface DowMonitorIntradayCapital {
   flow_30m?: number | null
   flow_today?: number | null
   last_flow_time?: string | null
-  flow_points?: number | null
-  windows?: DowMonitorIntradayCapitalWindow[]
+    flow_points?: number | null
+    quality?: 'COMPLETE' | 'UNAVAILABLE' | 'DELAYED' | 'INSUFFICIENT' | string
+    windows?: DowMonitorIntradayCapitalWindow[]
   source?: 'trading_day' | string
 }
 

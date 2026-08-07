@@ -13,6 +13,7 @@ import type {
 } from '@/lib/realtimeMarketData'
 
 import { DowMiniChart, getLatestValidDowSignalSide } from './DowMiniChart'
+import { DailyDecisionSummary } from './DailyDecisionSummary'
 import { formatServerTimestamp } from './formatServerTimestamp'
 import type {
   DowMonitorNotification,
@@ -21,6 +22,7 @@ import type {
   DowSignalSide,
   DowTimeframe,
 } from './types'
+import './DowMonitorCard.css'
 
 const TIMEFRAMES: Array<{ value: DowTimeframe; label: string }> = [
   { value: '5m', label: '5分' },
@@ -755,6 +757,9 @@ function blockedLabel(
 ) {
   if (forceBlocked) return blockedReason ?? '监控状态不可用'
   if (!item.enabled) return '监控已暂停'
+  if (item.analysis_status && item.analysis_status !== 'READY') {
+    return item.analysis_status_label ?? '分析尚未完成'
+  }
   if (state?.freshness_state === 'STALE_DATA') return '数据延迟'
   if (state?.freshness_state === 'ANALYSIS_PAUSED') return '分析暂停'
   return null
@@ -766,7 +771,6 @@ export function DowMonitorCard({
   onOpen,
   onToggle,
   onRemove,
-  onRead,
   forceBlocked = false,
   blockedReason,
   quoteReady = true,
@@ -774,7 +778,6 @@ export function DowMonitorCard({
   notificationError = false,
   togglePending = false,
   removePending = false,
-  readPendingIds,
   realtimeState,
   realtimeStatus,
 }: {
@@ -783,7 +786,6 @@ export function DowMonitorCard({
   onOpen: (symbol: string, timeframe: DowTimeframe) => void
   onToggle: (symbol: string, enabled: boolean) => void
   onRemove: (symbol: string) => void
-  onRead?: (notificationId: string) => void
   forceBlocked?: boolean
   blockedReason?: string
   quoteReady?: boolean
@@ -791,7 +793,6 @@ export function DowMonitorCard({
   notificationError?: boolean
   togglePending?: boolean
   removePending?: boolean
-  readPendingIds?: ReadonlySet<string>
   realtimeState?: RealtimeSymbolState
   realtimeStatus?: RealtimeStatus
 }) {
@@ -826,7 +827,8 @@ export function DowMonitorCard({
   const quoteTime = quoteAvailable
     ? formatServerTimestamp(displayedItem.quote_timestamp)
     : null
-  const successTime = quoteReady ? formatServerTimestamp(item.last_success_at) : null
+  const completedMinuteTime = formatServerTimestamp(item.completed_minute_timestamp)
+  const analysisTime = formatServerTimestamp(item.analysis_timestamp)
   const { bid, ask } = bestBidAsk(realtimeState?.depth)
   const realtimeDelayed = Boolean(
     realtimeState?.quoteDelayed
@@ -911,12 +913,70 @@ export function DowMonitorCard({
     currentStateSnapshot.cumulative,
     displayedItem.intraday_capital,
   )
+  const orderedNotifications = [...notifications].sort((left, right) => {
+    const leftTime = Date.parse(left.available_at ?? left.triggered_at)
+    const rightTime = Date.parse(right.available_at ?? right.triggered_at)
+    return rightTime - leftTime
+  })
+  const [latestNotification, ...historicalNotifications] = orderedNotifications
+  const dailySummary = displayedItem.minute_decision?.daily_summary ?? null
+
+  const renderNotification = (
+    notification: DowMonitorNotification,
+    isLatest: boolean,
+  ) => {
+    const triggerTimeframe = TIMEFRAMES.find(
+      option => option.value === notification.timeframe,
+    )?.label ?? notification.timeframe
+    const availableTime = formatServerTimestamp(
+      notification.available_at ?? notification.triggered_at,
+    )
+    const triggerPrice = Number.isFinite(notification.trigger_price)
+      ? notification.trigger_price.toFixed(2)
+      : null
+    const evidenceText = notification.evidence_text
+      ?? `${triggerTimeframe} ${notification.shape_name}，触发价 ${triggerPrice ?? '—'}`
+    const promptText = notification.prompt_text ?? notification.action_name
+
+    return (
+      <div
+        key={notification.notification_id}
+        data-testid={`card-message-${notification.notification_id}`}
+        className={cn(
+          'dow-timeline-row grid min-w-0 grid-cols-1 gap-1 border-b border-border/50 py-2 text-[10px] leading-relaxed last:border-b-0',
+          isLatest && 'border-l-2 border-l-accent pl-2',
+        )}
+      >
+        <div
+          data-testid={`card-message-headline-${notification.notification_id}`}
+          className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+        >
+          <span className={cn('min-w-0 break-words font-semibold', signalClass(notification.side))}>
+            提示：{promptText}
+          </span>
+          <span className="shrink-0 font-mono text-[9px] text-muted">
+            {availableTime ?? '—'}
+          </span>
+        </div>
+        <div
+          data-testid={`card-message-evidence-${notification.notification_id}`}
+          className="min-w-0 break-words text-secondary"
+        >
+          <span className="mr-1 font-semibold text-muted">
+            内部变化：
+          </span>
+          {evidenceText}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <article
       data-testid={`card-${item.symbol}`}
       data-tradable={blocked ? 'false' : 'true'}
       className={cn(
-        'group relative min-w-0 overflow-hidden rounded-card border bg-surface transition-colors hover:border-accent/40',
+        'dow-card-container group relative min-w-0 overflow-hidden rounded-card border bg-surface transition-colors hover:border-accent/40',
         blocked ? 'border-border/70 opacity-75' : 'border-border',
       )}
     >
@@ -978,10 +1038,15 @@ export function DowMonitorCard({
               {change > 0 ? '+' : ''}{change.toFixed(2)}%
             </span>
           )}
-          {(quoteTime || successTime) && (
-            <span className="ml-auto flex min-w-0 gap-2 overflow-hidden font-mono text-[9px] text-muted">
+          {(quoteTime || completedMinuteTime || analysisTime) && (
+            <span className="ml-auto flex min-w-0 flex-wrap justify-end gap-x-2 gap-y-0.5 font-mono text-[9px] text-muted">
               {quoteTime && <span className="whitespace-nowrap">行情 {quoteTime}</span>}
-              {successTime && <span className="whitespace-nowrap">成功 {successTime}</span>}
+              {completedMinuteTime && (
+                <span className="whitespace-nowrap">分钟 {completedMinuteTime}</span>
+              )}
+              {analysisTime && (
+                <span className="whitespace-nowrap">分析 {analysisTime}</span>
+              )}
             </span>
           )}
           {(bid != null || ask != null) && (
@@ -1048,40 +1113,10 @@ export function DowMonitorCard({
         />
       </button>
 
-      <div className="px-2.5 py-1.5">
-        <div
-          data-testid={`realtime-state-${item.symbol}`}
-          className={cn(
-            'min-w-0 rounded border px-2 py-1.5 text-[10px]',
-            currentStateClass(currentState.tone),
-          )}
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <span className="shrink-0 font-medium">方向：{currentState.directionLabel}</span>
-            <span className="shrink-0 font-medium">{currentState.probabilityLabel}</span>
-            <span className="shrink-0 font-mono tabular-nums">{currentState.probability}%</span>
-          </div>
-          <div className="mt-1 text-[9px] opacity-90">
-            主因：{currentState.conciseReason}
-          </div>
-          <div className="mt-1 space-y-0.5 text-[9px] opacity-90">
-            {currentState.forecastItems.map(item => (
-              <div key={item.title}>
-                <span className="font-medium">{item.title}：</span>
-                <span>{item.text}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-0.5 text-[9px] opacity-80">
-            证据：{currentState.evidenceText}
-          </div>
-        </div>
-      </div>
-
       <section
         role="log"
-        aria-label={`${item.symbol} 消息通知`}
-        className="h-32 overflow-y-auto border-t border-border/60 bg-base/20 px-2.5 py-1.5"
+        aria-label={`${item.symbol} 当日决策消息`}
+        className="min-w-0 border-t border-border/60 bg-base/20 px-2.5 py-1.5"
       >
         {blocked && (
           <div className="mb-1 text-[10px] font-medium text-muted">{blocked}</div>
@@ -1092,63 +1127,71 @@ export function DowMonitorCard({
         {notificationError && (
           <div className="mb-1 text-center text-[10px] text-danger">通知加载失败</div>
         )}
-        {notifications.length === 0 && !notificationLoading && !notificationError ? (
-          <div className="flex h-full items-center justify-center text-[10px] text-muted">
-            暂无消息通知
+        {dailySummary && <DailyDecisionSummary summary={dailySummary} />}
+        {orderedNotifications.length === 0 && !notificationLoading && !notificationError ? (
+          <div className="flex min-h-24 items-center justify-center text-[10px] text-muted">
+            {item.analysis_status === 'READY'
+              ? '当前分钟没有触发提示'
+              : item.analysis_status_label ?? '当前分钟没有触发提示'}
           </div>
-        ) : notifications.length > 0 ? (
-          <div>
-            {notifications.map((notification, index) => {
-              const isLatest = index === 0
-              const triggerTimeframe = TIMEFRAMES.find(
-                option => option.value === notification.timeframe,
-              )?.label ?? notification.timeframe
-              const triggerTime = formatServerTimestamp(notification.triggered_at)
-              const triggerPrice = Number.isFinite(notification.trigger_price)
-                ? notification.trigger_price.toFixed(2)
-                : null
-              return (
+        ) : latestNotification ? (
+          <div className="min-w-0">
+            <div data-testid="latest-card-message">
+              {renderNotification(latestNotification, true)}
+            </div>
+            {historicalNotifications.length > 0 && (
+              <details className="min-w-0 border-t border-border/60">
+                <summary className="cursor-pointer py-2 text-[10px] font-medium text-muted">
+                  历史信息（{historicalNotifications.length}条）
+                </summary>
                 <div
-                  key={notification.notification_id}
-                  data-testid={`card-message-${notification.notification_id}`}
-                  className={cn(
-                    'border-b border-border/50 py-1.5 last:border-b-0',
-                    isLatest && 'border-l-2 border-l-accent pl-2',
-                  )}
+                  data-testid="history-card-messages"
+                  className="max-h-56 min-w-0 overflow-y-auto border-t border-border/50"
                 >
-                  <div className="flex min-w-0 items-center gap-1.5 text-[10px]">
-                    {isLatest && (
-                      <span className="shrink-0 text-[9px] font-medium text-accent">最新</span>
-                    )}
-                    <span className={cn('shrink-0 font-medium', signalClass(notification.side))}>
-                      {notification.action_name}
-                    </span>
-                    <span className="shrink-0 font-mono text-[9px] text-secondary">
-                      周期 {triggerTimeframe}
-                    </span>
-                    <span className="truncate text-secondary">{notification.shape_name}</span>
-                    {notification.read_at == null && onRead && (
-                      <button
-                        type="button"
-                        aria-label={`标记 ${notification.symbol} 已读`}
-                        disabled={readPendingIds?.has(notification.notification_id)}
-                        onClick={() => onRead(notification.notification_id)}
-                        className="ml-auto shrink-0 text-[9px] text-muted underline-offset-2 hover:text-foreground hover:underline disabled:cursor-wait disabled:opacity-50"
-                      >
-                        已读
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[9px] text-muted">
-                    <span className="shrink-0">触发 {triggerTime ?? '—'}</span>
-                    <span className="shrink-0 text-foreground">@{triggerPrice ?? '—'}</span>
-                  </div>
+                  {historicalNotifications.map(notification =>
+                    renderNotification(notification, false),
+                  )}
                 </div>
-              )
-            })}
+              </details>
+            )}
           </div>
         ) : null}
       </section>
+
+      <div className="px-2.5 py-1.5">
+        <details className="min-w-0">
+          <summary className="cursor-pointer text-[9px] text-muted">
+            分钟行情原始信息（辅助）
+          </summary>
+          <div
+            data-testid={`realtime-state-${item.symbol}`}
+            className={cn(
+              'mt-1 min-w-0 rounded border px-2 py-1.5 text-[10px]',
+              currentStateClass(currentState.tone),
+            )}
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <span className="shrink-0 font-medium">方向：{currentState.directionLabel}</span>
+              <span className="shrink-0 font-medium">{currentState.probabilityLabel}</span>
+              <span className="shrink-0 font-mono tabular-nums">{currentState.probability}%</span>
+            </div>
+            <div className="mt-1 text-[9px] opacity-90">
+              主因：{currentState.conciseReason}
+            </div>
+            <div className="mt-1 space-y-0.5 text-[9px] opacity-90">
+              {currentState.forecastItems.map(item => (
+                <div key={item.title}>
+                  <span className="font-medium">{item.title}：</span>
+                  <span>{item.text}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-0.5 text-[9px] opacity-80">
+              证据：{currentState.evidenceText}
+            </div>
+          </div>
+        </details>
+      </div>
     </article>
   )
 }

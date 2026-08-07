@@ -25,5 +25,43 @@ specifications:
     status: authoritative
     requirements:
       - REQ-DOW-HEAD-SHOULDERS-SIGNAL-001
+  - id: USER-20260728-DOW-MONITOR-DETAIL-TOGGLE-LAYOUT
+    path: docs/specs/dow-monitor-detail-toggle-layout.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-MONITOR-DETAIL-TOGGLE-LAYOUT-001
+  - id: SPEC-COLLECTION-MONITOR-INTEGRATION-001
+    path: docs/specs/collection-monitor-integration.md
+    status: authoritative
+    requirements:
+      - REQ-COLLECTION-MONITOR-PROXY-001
+      - REQ-COLLECTION-MONITOR-PAGE-001
+      - REQ-COLLECTION-MONITOR-PREACCEPTANCE-001
+  - id: SPEC-DOW-MONITOR-SYMBOL-IDENTITY-001
+    path: docs/specs/dow-monitor-symbol-identity.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-MONITOR-SYMBOL-IDENTITY-001
+  - id: USER-20260729-DOW-MONITOR-REALTIME-RENDER
+    path: docs/specs/dow-monitor-realtime-render-performance.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-MONITOR-REALTIME-RENDER-THROTTLE-001
+      - REQ-DOW-MONITOR-REALTIME-RENDER-BATCH-001
+  - id: USER-20260729-DOW-DAILY-DECISION-BEGINNER-COPY
+    path: docs/specs/dow-daily-decision-beginner-copy.md
+    status: authoritative
+    requirements:
+      - REQ-DOW-DAILY-DECISION-BEGINNER-COPY-001
 conflicts: []
-exceptions: []
+exceptions:
+  - id: EXC-COLLECTION-MONITOR-PREACCEPTANCE-DEPLOY-001
+    scope: observation-only deployment before Monday live semantic acceptance
+    owner: user
+    reason: deploy the read-only page before live trading data is available
+    approval: explicit user directive on 2026-07-26
+    expires: 2026-07-28
+    constraints:
+      - no notifications or actions
+      - no collector or schedule mutation
+      - no claim of live semantic acceptance

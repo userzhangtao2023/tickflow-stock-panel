@@ -386,6 +386,8 @@ describe('Dow monitor page', () => {
 
     expect(screen.getByTestId('card-01347.HK')).toBeInTheDocument()
     expect(screen.getByTestId('realtime-state-01347.HK')).toHaveTextContent('方向：')
+    expect(within(screen.getByTestId('card-01347.HK')).queryByText(/历史信息（/))
+      .not.toBeInTheDocument()
     expect(screen.queryByTestId('card-INTC.US')).not.toBeInTheDocument()
     expect(realtimeMocks.useRealtimeMarketData).toHaveBeenCalledWith(
       ['01347.HK'],
@@ -884,6 +886,276 @@ describe('Dow monitor page', () => {
     expect(stateBox).toHaveTextContent('下跌承接 / 资金修复 / 卖压衰减 / 弱转强观察')
   })
 
+  it('does not render a duplicate minute decision panel while realtime quotes update', () => {
+    window.history.replaceState(null, '', '/dow-monitor?market=hk')
+    const withDecision = structuredClone(overview)
+    withDecision.symbols[0].minute_decision = {
+      symbol: '01347.HK',
+      market: 'hk',
+      decision_minute: '2026-07-27T10:26:00+08:00',
+      direction: 'BULLISH',
+      direction_label: '偏涨',
+      action: 'WATCH_BUY',
+      action_label: '买入观察',
+      confidence: 72,
+      dominant_timeframe: '15m',
+      confirmation_timeframes: ['30m'],
+      supporting_reasons: ['15分钟趋势向上'],
+      contrary_risks: ['5分钟量能仍需确认'],
+      invalidation_conditions: ['跌破 31.20 后取消买入观察'],
+      data_status: 'COMPLETE',
+      status_label: '分钟决策已完成',
+      source_timestamp: '2026-07-27T10:25:58+08:00',
+    }
+    hooks.overview = { data: withDecision, isError: false, isLoading: false }
+
+    const { rerender } = render(<DowMonitor />)
+    const card = screen.getByTestId('card-01347.HK')
+    expect(within(card).queryByTestId('minute-decision-panel')).not.toBeInTheDocument()
+    expect(within(card).getByTestId('latest-card-message')).toHaveTextContent('买入')
+
+    realtimeMocks.view = {
+      status: 'realtime',
+      states: new Map([
+        [
+          '01347.HK',
+          {
+            symbol: '01347.HK',
+            streamId: 'stream-decision-stability',
+            sequence: 9,
+            eventAt: '2026-07-27T02:26:45Z',
+            publishedAt: '2026-07-27T02:26:46Z',
+            quote: {
+              lastDone: 138.8,
+              prevClose: 133.2,
+              timestamp: '2026-07-27T02:26:45Z',
+            },
+            quoteDelayed: false,
+            depthDelayed: false,
+            candlestickDelayed: false,
+          },
+        ],
+      ]),
+    }
+    rerender(<DowMonitor />)
+
+    expect(within(card).queryByTestId('minute-decision-panel')).not.toBeInTheDocument()
+    expect(within(card).getByTestId('latest-card-message')).toHaveTextContent('买入')
+    expect(within(card).getByText('138.80')).toBeVisible()
+  })
+
+  it('shows a beginner-friendly compact daily summary and keeps detailed history', async () => {
+    const user = userEvent.setup()
+    window.history.replaceState(null, '', '/dow-monitor?market=hk')
+    const withSummary = structuredClone(overview)
+    withSummary.symbols[0].minute_decision = {
+      symbol: '01347.HK',
+      market: 'hk',
+      decision_minute: '2026-07-28T16:00:00+08:00',
+      direction: 'BEARISH',
+      direction_label: '偏跌',
+      action: 'OBSERVE',
+      action_label: '继续观察',
+      confidence: 66,
+      dominant_timeframe: '15m',
+      confirmation_timeframes: ['30m'],
+      supporting_reasons: ['15/30分钟结构同向偏弱'],
+      contrary_risks: [],
+      invalidation_conditions: ['重新站上VWAP并获得资金确认'],
+      data_status: 'COMPLETE',
+      status_label: '数据完整',
+      source_timestamp: '2026-07-28T15:59:00+08:00',
+      daily_summary: {
+        as_of_minute: '2026-07-28T16:00:00+08:00',
+        direction: 'BEARISH',
+        direction_label: '偏跌',
+        action: 'OBSERVE',
+        action_label: '继续观察',
+        confidence: 66,
+        phase_path: [
+          {
+            code: 'RAPID_RISE_CONFIRMED',
+            label: '急涨确认',
+            first_observed_at: '2026-07-28T09:34:00+08:00',
+          },
+          {
+            code: 'PRICE_CAPITAL_DIVERGENCE',
+            label: '价格资金背离',
+            first_observed_at: '2026-07-28T09:36:00+08:00',
+          },
+          {
+            code: 'SURGE_REVERSAL_RISK',
+            label: '冲高回落',
+            first_observed_at: '2026-07-28T09:39:00+08:00',
+          },
+          {
+            code: 'DOWNSIDE_CONFIRMED',
+            label: '下跌确认',
+            first_observed_at: '2026-07-28T10:24:00+08:00',
+          },
+        ],
+        summary_text: '当前价格走势偏弱，短线仍承受卖出压力，先不要追涨。',
+        key_evidence: [
+          {
+            code: 'PRICE_CAPITAL_DIVERGENCE',
+            text: '大单转负1436万',
+            observed_at: '2026-07-28T09:36:00+08:00',
+          },
+          {
+            code: 'ACTIVE_SELL_IMBALANCE',
+            text: '主动卖出占优40%',
+            observed_at: '2026-07-28T09:36:00+08:00',
+          },
+          {
+            code: 'SELL_POINT_15m',
+            text: '15分卖出确认',
+            observed_at: '2026-07-28T12:00:00+08:00',
+          },
+        ],
+        reversal_condition: '价格重新回到今日平均成交成本140.41上方，并且主动买入成交持续增加',
+        data_status: 'COMPLETE',
+        status_label: '实时',
+        current_price: 139.3,
+        vwap_price: 140.41,
+        vwap_distance_pct: -0.7905,
+        input_event_ids: ['risk-latest', 'risk-history'],
+      },
+    }
+    hooks.overview = { data: withSummary, isError: false, isLoading: false }
+    hooks.notifications = {
+      data: {
+        notifications: [
+          {
+            ...hkNotification,
+            notification_id: 'risk-latest',
+            side: 'RISK',
+            available_at: '2026-07-28T14:11:00+08:00',
+            prompt_text: '冲高回落风险',
+            evidence_text: '高点回落10.60%；盘口卖压78%，5分钟量能放大43.1%。',
+          },
+          {
+            ...hkNotification,
+            notification_id: 'risk-history',
+            side: 'RISK',
+            available_at: '2026-07-28T14:07:00+08:00',
+            prompt_text: '资金承接无效',
+            evidence_text: '价格跌破VWAP 3.76%，大单净流入10070万，但价格继续下跌。',
+          },
+          {
+            ...hkNotification,
+            notification_id: 'sell-history',
+            side: 'SELL',
+            timeframe: '15m',
+            available_at: '2026-07-28T12:00:00+08:00',
+            prompt_text: '卖出触发｜趋势线突破',
+            evidence_text: '周期15分，趋势线突破，触发价139.00。',
+          },
+        ],
+      },
+      isError: false,
+      isLoading: false,
+    }
+
+    render(<DowMonitor />)
+
+    const card = screen.getByTestId('card-01347.HK')
+    const summary = within(card).getByTestId('daily-decision-summary')
+    const latest = within(card).getByTestId('latest-card-message')
+    expect(summary).toHaveTextContent('今日综合决策')
+    expect(summary).toHaveTextContent('当前判断：走势偏弱')
+    expect(summary).toHaveTextContent('建议动作：先观望，不追涨')
+    expect(summary).toHaveTextContent('今日平均成交成本：140.41')
+    expect(summary).toHaveTextContent('当前价格：139.30')
+    expect(summary).toHaveTextContent('当前价相对成本：低于0.79%')
+    expect(summary).toHaveTextContent('证据一致度：66%')
+    expect(summary).toHaveTextContent('不是上涨或下跌概率')
+    const decisionDetails = within(summary).getByText('查看详细说明').closest('details')
+    expect(decisionDetails).not.toBeNull()
+    expect(decisionDetails).not.toHaveAttribute('open')
+    await user.click(within(summary).getByText('查看详细说明'))
+    expect(decisionDetails).toHaveAttribute('open')
+    expect(summary).toHaveTextContent('这说明什么')
+    expect(summary).toHaveTextContent('为什么这样判断')
+    expect(summary).toHaveTextContent(
+      '急涨确认 → 价格资金背离 → 冲高回落 → 下跌确认',
+    )
+    expect(summary).toHaveTextContent('大单转负1436万')
+    expect(summary).toHaveTextContent('15分卖出确认')
+    expect(summary).toHaveTextContent('什么情况下改变判断')
+    expect(
+      Boolean(summary.compareDocumentPosition(latest) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+    expect(latest).toHaveTextContent('冲高回落风险')
+    expect(latest).toHaveTextContent('盘口卖压78%')
+
+    const historyDetails = within(card).getByText('历史信息（2条）').closest('details')
+    expect(historyDetails).not.toBeNull()
+    expect(historyDetails).not.toHaveAttribute('open')
+    const history = within(card).getByTestId('history-card-messages')
+    expect(history).toHaveTextContent('价格跌破VWAP 3.76%')
+    expect(history).toHaveTextContent('大单净流入10070万')
+    expect(history).toHaveTextContent('周期15分，趋势线突破，触发价139.00')
+  })
+
+  it('keeps a daily summary visible when the current day has no message', () => {
+    window.history.replaceState(null, '', '/dow-monitor?market=hk')
+    const withSummary = structuredClone(overview)
+    withSummary.symbols[0].minute_decision = {
+      symbol: '01347.HK',
+      market: 'hk',
+      decision_minute: '2026-07-28T09:31:00+08:00',
+      direction: 'RANGE',
+      direction_label: '震荡',
+      action: 'OBSERVE',
+      action_label: '继续观察',
+      confidence: 40,
+      dominant_timeframe: null,
+      confirmation_timeframes: [],
+      supporting_reasons: [],
+      contrary_risks: ['关键周期不足'],
+      invalidation_conditions: ['等待15/30分钟结构完整'],
+      data_status: 'INSUFFICIENT_STRUCTURE',
+      status_label: '关键周期不足',
+      source_timestamp: '2026-07-28T09:30:00+08:00',
+      daily_summary: {
+        as_of_minute: '2026-07-28T09:31:00+08:00',
+        direction: 'RANGE',
+        direction_label: '震荡',
+        action: 'OBSERVE',
+        action_label: '继续观察',
+        confidence: 40,
+        phase_path: [],
+        summary_text: '多空证据尚未同向，继续观察。',
+        key_evidence: [],
+        reversal_condition: '15/30分钟重新同向并获得资金确认',
+        data_status: 'INSUFFICIENT_STRUCTURE',
+        status_label: '证据不足',
+        current_price: 139.3,
+        vwap_price: null,
+        vwap_distance_pct: null,
+        input_event_ids: [],
+      },
+    }
+    hooks.overview = { data: withSummary, isError: false, isLoading: false }
+    hooks.notifications = {
+      data: { notifications: [] },
+      isError: false,
+      isLoading: false,
+    }
+
+    render(<DowMonitor />)
+
+    const card = screen.getByTestId('card-01347.HK')
+    const summary = within(card).getByTestId('daily-decision-summary')
+    expect(summary).toHaveTextContent('当前判断：方向不清楚')
+    expect(summary).toHaveTextContent('建议动作：先观望，不追涨')
+    expect(summary).toHaveTextContent('今日平均成交成本暂不可用')
+    expect(summary).toHaveTextContent('证据不足')
+    expect(within(card).getByRole('log')).toHaveTextContent(
+      '当前分钟没有触发提示',
+    )
+  })
+
   it('keeps the market query parameter in sync when switching tabs', async () => {
     const user = userEvent.setup()
     window.history.replaceState(null, '', '/dow-monitor?market=hk')
@@ -914,16 +1186,39 @@ describe('Dow monitor page', () => {
     expect(screen.queryByTestId('card-message-INTC.US-SELL')).not.toBeInTheDocument()
   })
 
-  it('shows multiple stock notifications as plain text rows in a taller message box', () => {
+  it('shows only the latest message and folds every older message newest first', async () => {
+    const user = userEvent.setup()
     hooks.notifications = {
       data: {
         notifications: [
-          hkNotification,
           {
             ...hkNotification,
             notification_id: '01347.HK-BUY-30m',
             timeframe: '30m',
             shape_name: '第二次突破',
+            triggered_at: '2026-07-23T01:06:00Z',
+            category: 'SELL_POINT',
+            available_at: '2026-07-23T01:06:00Z',
+            evidence_text: '周期30分，跌破趋势线13.20，结构位12.90',
+            prompt_text: '卖出触发｜第二次突破',
+          },
+          {
+            ...hkNotification,
+            notification_id: '01347.HK-RISK',
+            side: 'RISK',
+            timeframe: '1m',
+            triggered_at: '2026-07-23T01:05:30Z',
+            category: 'EARLY_RISK',
+            available_at: '2026-07-23T01:05:30Z',
+            evidence_text: '高点回落1.44%；主动卖出占优27%，盘口卖压64%，资金流1分钟恶化1500万。',
+            prompt_text: '首次冲高回落预警',
+          },
+          {
+            ...hkNotification,
+            category: 'BUY_POINT',
+            available_at: '2026-07-23T01:05:00Z',
+            evidence_text: '周期5分，向上突破，触发价11.00',
+            prompt_text: '买入触发｜向上突破',
           },
           usNotification,
         ],
@@ -935,16 +1230,63 @@ describe('Dow monitor page', () => {
     render(<DowMonitor />)
 
     const hongKongCard = screen.getByTestId('card-01347.HK')
-    const messageBox = within(hongKongCard).getByRole('log', { name: '01347.HK 消息通知' })
-    expect(messageBox).toHaveClass('h-32', 'overflow-y-auto')
-    const firstMessage = within(messageBox).getByTestId('card-message-01347.HK-BUY')
-    expect(firstMessage).toHaveClass('border-b', 'border-l-2', 'border-l-accent')
-    expect(firstMessage).not.toHaveClass('rounded', 'border', 'bg-elevated/50')
-    expect(within(firstMessage).getByText('最新')).toBeInTheDocument()
-    const secondMessage = within(messageBox).getByTestId('card-message-01347.HK-BUY-30m')
-    expect(secondMessage).not.toHaveClass('border-l-2', 'border-l-accent')
-    expect(within(secondMessage).queryByText('最新')).not.toBeInTheDocument()
+    expect(hongKongCard).toHaveClass('dow-card-container')
+    expect(within(hongKongCard).queryByLabelText('分钟决策分析中心'))
+      .not.toBeInTheDocument()
+    const messageBox = within(hongKongCard).getByRole('log', { name: '01347.HK 当日决策消息' })
+    expect(messageBox).not.toHaveTextContent('可获知时间')
+    expect(messageBox).not.toHaveTextContent('完成后')
+    expect(within(messageBox).queryByRole('button', { name: '标记 01347.HK 已读' }))
+      .not.toBeInTheDocument()
+    expect(messageBox).toHaveTextContent('首次冲高回落预警')
+    expect(messageBox).toHaveTextContent('资金流1分钟恶化1500万')
+    const latestMessage = within(messageBox).getByTestId('latest-card-message')
+    expect(within(latestMessage).getByTestId('card-message-01347.HK-BUY-30m'))
+      .toBeInTheDocument()
+    expect(within(latestMessage).queryByTestId('card-message-01347.HK-RISK'))
+      .not.toBeInTheDocument()
+
+    const historySummary = within(messageBox).getByText('历史信息（2条）')
+    const historyDetails = historySummary.closest('details')
+    expect(historyDetails).not.toBeNull()
+    expect(historyDetails).not.toHaveAttribute('open')
+    const historyMessages = within(messageBox).getByTestId('history-card-messages')
+    const messageRows = Array.from(
+      historyMessages.querySelectorAll<HTMLElement>('[data-testid^="card-message-"]'),
+    ).filter(element => !element.dataset.testid?.includes('headline')
+      && !element.dataset.testid?.includes('evidence'))
+    expect(messageRows.map(element => element.dataset.testid)).toEqual([
+      'card-message-01347.HK-RISK',
+      'card-message-01347.HK-BUY',
+    ])
+    expect(within(historyMessages).queryByTestId('card-message-01347.HK-BUY-30m'))
+      .not.toBeInTheDocument()
+    await user.click(historySummary)
+    expect(historyDetails).toHaveAttribute('open')
+
+    const newestMessage = within(latestMessage).getByTestId('card-message-01347.HK-BUY-30m')
+    expect(newestMessage).toHaveClass('border-b', 'dow-timeline-row')
+    expect(newestMessage).not.toHaveClass('rounded', 'bg-elevated/50')
+    const newestHeadline = within(newestMessage).getByTestId(
+      'card-message-headline-01347.HK-BUY-30m',
+    )
+    expect(within(newestHeadline).getByText('提示：卖出触发｜第二次突破'))
+      .toHaveClass('font-semibold')
+    expect(within(newestHeadline).getByText('2026-07-23 09:06')).toBeVisible()
+    expect(within(newestMessage).getByTestId(
+      'card-message-evidence-01347.HK-BUY-30m',
+    )).toHaveTextContent(
+      '内部变化：周期30分，跌破趋势线13.20，结构位12.90',
+    )
     expect(within(messageBox).queryByTestId('card-message-INTC.US-SELL')).not.toBeInTheDocument()
+    const rawDetails = within(hongKongCard)
+      .getByText('分钟行情原始信息（辅助）')
+      .closest('details')
+    expect(rawDetails).not.toBeNull()
+    expect(rawDetails).not.toHaveAttribute('open')
+    expect(
+      Boolean(historyDetails!.compareDocumentPosition(rawDetails!) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
     expect(screen.queryByTestId('dow-monitor-signal-rail')).not.toBeInTheDocument()
   })
 
@@ -957,7 +1299,7 @@ describe('Dow monitor page', () => {
     expect(within(named).getByText('+1.25%')).toBeInTheDocument()
     expect(within(named).queryByText('+5.77%')).not.toBeInTheDocument()
     expect(within(named).getByText('行情 2026-03-29 10:51')).toBeVisible()
-    expect(within(named).getByText('成功 2026-07-23 09:05')).toBeVisible()
+    expect(within(named).queryByText('成功 2026-07-23 09:05')).not.toBeInTheDocument()
     expect(screen.getByText('数据源 webstock · 源 2026-07-23 09:05')).toBeVisible()
 
     const unnamed = screen.getByTestId('card-INTC.US')
@@ -1036,13 +1378,13 @@ describe('Dow monitor page', () => {
       'compact-two-row',
     )
     expect(within(card).getByText('行情 2026-03-29 10:51')).toBeInTheDocument()
-    expect(within(card).getByText('成功 2026-07-23 09:05')).toBeInTheDocument()
+    expect(within(card).queryByText('成功 2026-07-23 09:05')).not.toBeInTheDocument()
     expect(within(card).getByTestId('mini-chart-01347.HK-5m')).toHaveStyle({
       height: '180px',
     })
   })
 
-  it('shows the latest signal trigger time and trigger price on the card', () => {
+  it('shows legacy signal fields through the causal message fallback', () => {
     hooks.notifications = {
       data: {
         notifications: [{ ...hkNotification, timeframe: 'day' }, usNotification],
@@ -1054,10 +1396,10 @@ describe('Dow monitor page', () => {
     render(<DowMonitor />)
 
     const card = screen.getByTestId('card-01347.HK')
-    expect(within(card).getByText('周期 日K')).toBeVisible()
-    expect(within(card).getByText('触发 2026-07-23 09:05')).toBeVisible()
-    expect(within(card).getByText('@11.00')).toBeVisible()
-    expect(within(card).getByText('向上突破')).toBeVisible()
+    expect(within(card).getByTestId('card-message-headline-01347.HK-BUY'))
+      .toHaveTextContent('提示：买入2026-07-23 09:05')
+    expect(within(card).getByTestId('card-message-evidence-01347.HK-BUY'))
+      .toHaveTextContent('内部变化：日K 向上突破，触发价 11.00')
   })
 
   it('filters both cards and notifications by active, buy, and sell signal states', async () => {
@@ -1179,10 +1521,10 @@ describe('Dow monitor page', () => {
       'data-tradable',
       'false',
     )
-    expect(within(card).getByText('买入')).toHaveClass('text-emerald-400')
+    expect(within(card).getByText('提示：买入')).toHaveClass('text-emerald-400')
 
     expect(
-      within(screen.getByTestId('card-message-INTC.US-SELL')).getByText('卖出'),
+      within(screen.getByTestId('card-message-INTC.US-SELL')).getByText('提示：卖出'),
     ).toHaveClass('text-red-400')
     expect(screen.getByTestId('card-600000.SH')).toHaveAttribute('data-tradable', 'false')
     expect(within(screen.getByTestId('card-600000.SH')).getByText('分析暂停')).toBeInTheDocument()
@@ -1251,9 +1593,9 @@ describe('Dow monitor page', () => {
 
     await user.click(screen.getByRole('button', { name: 'A股' }))
 
-    expect(screen.getByRole('log', { name: '600000.SH 消息通知' })).toHaveTextContent(
-      '暂无消息通知',
-    )
+    const messageBox = screen.getByRole('log', { name: '600000.SH 当日决策消息' })
+    expect(messageBox).toHaveTextContent('分析暂停')
+    expect(messageBox).toHaveTextContent('当前分钟没有触发提示')
     expect(screen.queryByTestId('dow-monitor-signal-rail')).not.toBeInTheDocument()
   })
 
@@ -1294,7 +1636,7 @@ describe('Dow monitor page', () => {
     hooks.notifications = { data: undefined, isError: false, isLoading: true }
     rerender(<DowMonitor />)
     expect(screen.getByRole('alert')).toHaveTextContent('正在连接监控服务')
-    expect(screen.getByRole('log', { name: '01347.HK 消息通知' })).toHaveTextContent(
+    expect(screen.getByRole('log', { name: '01347.HK 当日决策消息' })).toHaveTextContent(
       '正在加载通知',
     )
     expect(screen.getByText('数据源不可用')).toBeInTheDocument()
@@ -1367,7 +1709,6 @@ describe('Dow monitor page', () => {
     hooks.add.mockImplementation(() => undefined)
     hooks.setEnabled.mockRejectedValueOnce(new Error('toggle failed'))
     hooks.remove.mockRejectedValueOnce(new Error('remove failed'))
-    hooks.markRead.mockRejectedValueOnce(new Error('read failed'))
     const { rerender } = render(<DowMonitor />)
 
     expect(screen.getByRole('alert')).toHaveTextContent('添加失败，请重试')
@@ -1379,29 +1720,22 @@ describe('Dow monitor page', () => {
 
     await user.click(screen.getByRole('switch', { name: '01347.HK 监控开关' }))
     await user.click(screen.getByRole('button', { name: '移除 INTC.US' }))
-    await user.click(screen.getByRole('button', { name: '标记 01347.HK 已读' }))
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         '01347.HK 监控开关更新失败，请重试',
       )
       expect(screen.getByRole('alert')).toHaveTextContent('移除 INTC.US 失败，请重试')
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        '标记 01347.HK 已读失败，请重试',
-      )
     })
     expect(screen.getByRole('button', { name: '添加' })).not.toBeDisabled()
     expect(screen.getByRole('switch', { name: '01347.HK 监控开关' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '移除 INTC.US' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: '标记 01347.HK 已读' })).not.toBeDisabled()
 
     await user.click(screen.getByRole('switch', { name: '01347.HK 监控开关' }))
     await user.click(screen.getByRole('button', { name: '移除 INTC.US' }))
-    await user.click(screen.getByRole('button', { name: '标记 01347.HK 已读' }))
     await waitFor(() => {
       expect(hooks.setEnabled).toHaveBeenCalledTimes(2)
       expect(hooks.remove).toHaveBeenCalledTimes(2)
-      expect(hooks.markRead).toHaveBeenCalledTimes(2)
     })
 
     hooks.addState = { isError: false, isPending: false }
@@ -1420,7 +1754,6 @@ describe('Dow monitor page', () => {
     expect(screen.getByRole('switch', { name: '01347.HK 监控开关' })).not.toBeDisabled()
     expect(screen.getByRole('switch', { name: 'INTC.US 监控开关' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '移除 INTC.US' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: '标记 01347.HK 已读' })).not.toBeDisabled()
   })
 
   it('tracks concurrent toggle pending and errors per symbol in reverse settlement order', async () => {
@@ -1480,34 +1813,6 @@ describe('Dow monitor page', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       '移除 01347.HK 失败，请重试',
     )
-  })
-
-  it('tracks concurrent notification reads by id inside independent card message boxes', async () => {
-    const user = userEvent.setup()
-    const first = deferred()
-    const second = deferred()
-    hooks.markRead
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise)
-    render(<DowMonitor />)
-    const hk = screen.getByRole('button', { name: '标记 01347.HK 已读' })
-    const us = screen.getByRole('button', { name: '标记 INTC.US 已读' })
-
-    await user.click(hk)
-    await user.click(us)
-    expect(hk).toBeDisabled()
-    expect(us).toBeDisabled()
-
-    act(() => second.reject(new Error('US failed')))
-    await waitFor(() => expect(us).not.toBeDisabled())
-    expect(hk).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '标记 INTC.US 已读失败，请重试',
-    )
-
-    act(() => first.resolve(undefined))
-    await waitFor(() => expect(hk).not.toBeDisabled())
-    expect(us).not.toBeDisabled()
   })
 
   it('uses a dedicated detail control and never opens from nested keyboard actions', async () => {

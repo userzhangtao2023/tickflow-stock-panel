@@ -159,6 +159,47 @@ describe('RealtimeMarketDataClient', () => {
     expect(state?.quote?.lastDone).toBe(551)
   })
 
+  it('coalesces a burst of realtime messages into one visible snapshot per second', () => {
+    client.subscribe(['700.HK'], ['quote'], 1)
+    socket.message(snapshot({ sequence: 1, lastDone: 550 }))
+    const listener = vi.fn()
+    const unsubscribe = client.subscribeStore(listener)
+
+    for (let sequence = 2; sequence <= 21; sequence += 1) {
+      socket.message(update({ sequence, lastDone: 550 + sequence }))
+    }
+
+    expect(client.getState('700.HK')?.quote?.lastDone).toBe(571)
+    expect(client.getSnapshot().states.get('700.HK')?.quote?.lastDone).toBe(550)
+    expect(listener).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(999)
+    expect(listener).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(client.getSnapshot().states.get('700.HK')?.quote?.lastDone).toBe(571)
+    unsubscribe()
+  })
+
+  it('publishes the latest state for every changed symbol at the batch boundary', () => {
+    client.subscribe(['700.HK', '981.HK'], ['quote'], 1)
+    const listener = vi.fn()
+    const unsubscribe = client.subscribeStore(listener)
+
+    socket.message(update({ symbol: '700.HK', sequence: 1, lastDone: 551 }))
+    socket.message(update({ symbol: '981.HK', sequence: 1, lastDone: 66 }))
+    socket.message(update({ symbol: '700.HK', sequence: 2, lastDone: 552 }))
+
+    expect(listener).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(client.getSnapshot().states.get('700.HK')?.quote?.lastDone).toBe(552)
+    expect(client.getSnapshot().states.get('981.HK')?.quote?.lastDone).toBe(66)
+    unsubscribe()
+  })
+
   it('marks datasets delayed only while their market is open', () => {
     client.dispose()
     socket = new FakeSocket()
@@ -225,7 +266,34 @@ describe('RealtimeMarketDataClient', () => {
       action: 'unsubscribe',
       symbols: ['700.HK'],
     })
+    vi.advanceTimersByTime(0)
     expect(client.getStatus()).toBe('disconnected')
+  })
+
+  it('reuses the open socket when React replaces the last consumer', () => {
+    client.dispose()
+    const sockets: FakeSocket[] = []
+    client = new RealtimeMarketDataClient({
+      socketFactory: () => {
+        const next = new FakeSocket()
+        sockets.push(next)
+        return next
+      },
+      random: () => 0.5,
+      marketOpen: () => true,
+    })
+
+    const unsubscribe = client.subscribe(['NVDA.US'], ['quote'], 1)
+    unsubscribe()
+    client.subscribe(['NVDA.US', 'UAA.US'], ['quote'], 1)
+    vi.advanceTimersByTime(0)
+
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].readyState).toBe(1)
+    expect(sockets[0].sent.at(-1)).toEqual(expect.objectContaining({
+      action: 'subscribe',
+      symbols: ['NVDA.US', 'UAA.US'],
+    }))
   })
 
   it('caps jittered exponential reconnect delay at 15 seconds', () => {

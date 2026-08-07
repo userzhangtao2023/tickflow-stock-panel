@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { Layout } from '@/components/Layout'
@@ -60,5 +61,28 @@ describe('Dow monitor route', () => {
     expect(screen.getByRole('link', { name: '趋势监控' })).toHaveAttribute('href', '/dow-monitor')
     expect(within(screen.getByRole('banner')).getByText('趋势监控')).toBeInTheDocument()
     expect(routePaths()).toContain('dow-monitor')
+  })
+
+  it('exposes collection monitoring in the route and desktop/mobile navigation', async () => {
+    const user = userEvent.setup()
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/collection-monitor']}>
+          <MarketScopeProvider>
+            <Layout />
+          </MarketScopeProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByRole('link', { name: '采集监控' })).toHaveAttribute('href', '/collection-monitor')
+    expect(within(screen.getByRole('banner')).getByText('采集监控')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开导航菜单' }))
+    expect(within(screen.getByRole('dialog', { name: '主导航' })).getByRole('link', { name: '采集监控' })).toBeInTheDocument()
+    expect(routePaths()).toContain('collection-monitor')
   })
 })
