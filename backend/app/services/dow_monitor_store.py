@@ -36,6 +36,8 @@ class DowMonitorStore:
         self._decisions_path = self._directory / "dow_monitor_minute_decisions.json"
         self._notifications_path = self._directory / "dow_monitor_notifications.jsonl"
         self._activations_path = self._directory / "dow_monitor_activations.json"
+        self._states = tuple(self._load_models(self._states_path, DowTimeframeState))
+        self._states_signature = self._state_file_signature()
         self._notifications, self._read_at = self._load_notifications()
         self._event_keys = {notification.event_key for notification in self._notifications}
         self._notifications_signature = self._notification_file_signature()
@@ -104,15 +106,15 @@ class DowMonitorStore:
                 return False
             self._write_json(self._symbols_path, kept_symbols)
 
-            states = self._load_models(self._states_path, DowTimeframeState)
-            self._write_json(
-                self._states_path,
-                [
-                    item
-                    for item in states
-                    if _monitor_symbol_identity(item.symbol) != identity
-                ],
-            )
+            self._refresh_states()
+            states = [
+                item
+                for item in self._states
+                if _monitor_symbol_identity(item.symbol) != identity
+            ]
+            self._write_json(self._states_path, states)
+            self._states = tuple(states)
+            self._states_signature = self._state_file_signature()
             decisions = self._load_models(self._decisions_path, DowMinuteDecision)
             self._write_json(
                 self._decisions_path,
@@ -134,7 +136,8 @@ class DowMonitorStore:
         if not updates:
             return []
         with self._lock:
-            states = self._load_models(self._states_path, DowTimeframeState)
+            self._refresh_states()
+            states = list(self._states)
             update_keys = {
                 (_monitor_symbol_identity(state.symbol), state.timeframe)
                 for state in updates
@@ -150,12 +153,15 @@ class DowMonitorStore:
             ]
             states.extend(updates)
             self._write_json(self._states_path, states)
+            self._states = tuple(states)
+            self._states_signature = self._state_file_signature()
             return updates
 
     def get_state(self, symbol: str, timeframe: str) -> DowTimeframeState | None:
         with self._lock:
+            self._refresh_states()
             identity = _monitor_symbol_identity(symbol)
-            for state in self._load_models(self._states_path, DowTimeframeState):
+            for state in self._states:
                 if (
                     _monitor_symbol_identity(state.symbol) == identity
                     and state.timeframe == timeframe
@@ -165,7 +171,8 @@ class DowMonitorStore:
 
     def list_states(self) -> list[DowTimeframeState]:
         with self._lock:
-            return self._load_models(self._states_path, DowTimeframeState)
+            self._refresh_states()
+            return list(self._states)
 
     def save_minute_decision(self, snapshot: DowMinuteDecision) -> DowMinuteDecision:
         with self._lock:
@@ -334,6 +341,20 @@ class DowMonitorStore:
         self._notifications, self._read_at = self._load_notifications()
         self._event_keys = {notification.event_key for notification in self._notifications}
         self._notifications_signature = signature
+
+    def _refresh_states(self) -> None:
+        signature = self._state_file_signature()
+        if signature == self._states_signature:
+            return
+        self._states = tuple(self._load_models(self._states_path, DowTimeframeState))
+        self._states_signature = signature
+
+    def _state_file_signature(self) -> tuple[int, int] | None:
+        try:
+            stat = self._states_path.stat()
+        except OSError:
+            return None
+        return stat.st_size, stat.st_mtime_ns
 
     def _notification_file_signature(self) -> tuple[int, int] | None:
         try:

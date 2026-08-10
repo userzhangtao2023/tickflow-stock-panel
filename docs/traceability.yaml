@@ -692,6 +692,8 @@ requirements:
     acceptance:
       - {path: docs/acceptance/dow-monitor-fast-bootstrap.md, type: semantic-acceptance}
       - {path: docs/reviews/2026-08-02-dow-monitor-fast-bootstrap-review.md, type: independent-review}
+      - {path: docs/acceptance/dow-overview-state-cache-regression-20260811.md, type: semantic-acceptance}
+      - {path: docs/reviews/2026-08-11-dow-overview-state-cache-regression-review.md, type: independent-review}
   - id: REQ-DOW-MONITOR-LIGHTWEIGHT-LIST-OVERVIEW-001
     specification: SPEC-DOW-MONITOR-FAST-BOOTSTRAP-001
     implementation:

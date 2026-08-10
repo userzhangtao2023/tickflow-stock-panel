@@ -96,6 +96,41 @@ def _save_states(service: DowMonitorService) -> None:
         )
 
 
+def test_state_cache_reuses_unchanged_file_and_refreshes_external_update(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    writer = _service(tmp_path)
+    _save_states(writer)
+    reader = DowMonitorStore(tmp_path)
+    original_load = reader._load_models
+    state_loads = 0
+
+    def counted_load(path, model_type):
+        nonlocal state_loads
+        if path == reader._states_path:
+            state_loads += 1
+        return original_load(path, model_type)
+
+    monkeypatch.setattr(reader, "_load_models", counted_load)
+
+    assert len(reader.list_states()) == len(TIMEFRAMES)
+    assert reader.get_state("NBIS.US", "15m") is not None
+    assert state_loads == 0
+
+    changed = writer.store.get_state("NBIS.US", "15m")
+    assert changed is not None
+    writer.store.save_state(
+        changed.model_copy(update={"chart": {"bars": [{"timestamp": NOW.isoformat()}]}})
+    )
+
+    refreshed = reader.get_state("NBIS.US", "15m")
+    assert refreshed is not None
+    assert refreshed.chart["bars"][0]["timestamp"] == NOW.isoformat()
+    assert reader.list_states()
+    assert state_loads == 1
+
+
 def _notification(index: int = 1) -> DowNotification:
     return DowNotification(
         notification_id=f"notification-{index}",
